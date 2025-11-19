@@ -4,7 +4,9 @@
       "Bash(echo:*)",
       "Bash(downloads.gitkeep:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nInitial commit - TikTok/YouTube Scraper v1.0\n\nFeatures:\n- Video link extraction (TikTok & YouTube Shorts)\n- Smart incremental mode (stops after 10 consecutive existing videos)\n- Download with retry logic (3 attempts)\n- Anti-ban system (configurable random delays)\n- JSON-based download history per user\n- CLI with multiple options (limit, sleep times, platform)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git checkout:*)"
     ],
     "deny": [],
     "ask": []
