@@ -110,10 +110,10 @@ def is_slideshow(video_url):
         print(f"Error checking slideshow: {e}")
         return False
 
-def get_video_links(username, history, platform="tiktok", limit=None):
+def get_video_links(username, history, platform="tiktok", limit=None, callback_log=None, force_update=False):
     """
     Extracts video links for a given username using yt-dlp.
-    Stops if a video ID is already in history (Incremental Mode).
+    Stops if a video ID is already in history (Incremental Mode), unless force_update is True.
     Stops if the limit of new videos is reached.
     Returns a list of dictionaries containing 'url' and 'id'.
     """
@@ -124,7 +124,12 @@ def get_video_links(username, history, platform="tiktok", limit=None):
     else:
         url = username
 
-    print(f"Fetching videos for: {url}")
+    def log(msg, level="info"):
+        print(f"[{level.upper()}] {msg}")
+        if callback_log:
+            callback_log(msg, level)
+
+    log(f"Fetching videos for: {url}")
     
     ydl_opts = {
         'extract_flat': True,
@@ -141,11 +146,11 @@ def get_video_links(username, history, platform="tiktok", limit=None):
             info = ydl.extract_info(url, download=False)
             
             if not info:
-                print("Failed to extract info (None returned).")
+                log("Failed to extract info (None returned).", "error")
                 return []
 
             if 'entries' in info:
-                print(f"Found channel/user: {info.get('title', username)}")
+                log(f"Found channel/user: {info.get('title', username)}")
                 # 'entries' can be a generator, so we iterate carefully
                 for entry in info['entries']:
                     if entry:
@@ -154,8 +159,8 @@ def get_video_links(username, history, platform="tiktok", limit=None):
                         # INCREMENTAL CHECK (Smart Mode)
                         if video_id in history:
                             consecutive_matches += 1
-                            if consecutive_matches >= 10:
-                                print(f"Found {consecutive_matches} consecutive existing videos. Stopping extraction (Smart Incremental Mode).")
+                            if consecutive_matches >= 10 and not force_update:
+                                log(f"Found {consecutive_matches} consecutive existing videos. Stopping extraction (Smart Incremental Mode).", "warning")
                                 break
                         else:
                             consecutive_matches = 0 # Reset counter if we find a new video
@@ -167,7 +172,7 @@ def get_video_links(username, history, platform="tiktok", limit=None):
                                 
                                 # LIMIT CHECK
                                 if limit and new_videos_count >= limit:
-                                    print(f"Limit of {limit} videos reached. Stopping extraction.")
+                                    log(f"Limit of {limit} videos reached. Stopping extraction.", "warning")
                                     break
             else:
                 video_url = info.get('url') or info.get('webpage_url')
@@ -176,13 +181,13 @@ def get_video_links(username, history, platform="tiktok", limit=None):
                     if video_id not in history:
                         videos.append({'url': video_url, 'id': video_id})
                     else:
-                        print(f"Video {video_id} already in history.")
+                        log(f"Video {video_id} already in history.", "info")
                     
     except Exception as e:
-        print(f"Error extracting links: {e}")
+        log(f"Error extracting links: {e}", "error")
         return []
 
-    print(f"Found {len(videos)} new videos.")
+    log(f"Found {len(videos)} new videos.", "success")
     return videos
 
 def organize_slideshow(output_dir, video_id):
@@ -342,6 +347,7 @@ def main():
     parser.add_argument("--min-sleep", type=int, default=5, help="Minimum sleep time in seconds (default: 5).")
     parser.add_argument("--max-sleep", type=int, default=15, help="Maximum sleep time in seconds (default: 15).")
     parser.add_argument("--limit", type=int, help="Limit the number of videos to extract/download.")
+    parser.add_argument("--force-update", action="store_true", help="Force update mode: check all videos and ignore incremental stop.")
     
     args = parser.parse_args()
     
@@ -395,14 +401,17 @@ def main():
     # Create user directory if it doesn't exist
     user_dir = get_user_dir(username)
     if not os.path.exists(user_dir):
-        os.makedirs(user_dir)
+        os.makedirs(user_dir, exist_ok=True)
         print(f"Created directory: {user_dir}")
 
     # Load history FIRST for incremental extraction
     history = load_history(username)
 
     print(f"Starting extraction for user: {username} on {args.platform}...")
-    videos = get_video_links(username, history, args.platform, args.limit)
+    if args.force_update:
+        print("⚠️  FORCE UPDATE MODE ENABLED: Will scan all videos.")
+
+    videos = get_video_links(username, history, args.platform, args.limit, force_update=args.force_update)
     
     if videos:
         save_links_to_file(username, videos)

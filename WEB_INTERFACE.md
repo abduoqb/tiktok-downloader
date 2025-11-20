@@ -15,7 +15,8 @@ Interface web moderne pour gérer vos profils TikTok/YouTube et télécharger de
 - **Statistiques détaillées** : Vidéos dans l'historique vs téléchargées
 - **Liste des vidéos** : Toutes les vidéos téléchargées avec métadonnées
 - **Synchronisation** : Télécharger les nouvelles vidéos
-- **Vue liste/galerie** : Deux modes d'affichage (galerie à venir)
+- **Vue liste/galerie** : Deux modes d'affichage avec lecteur vidéo intégré
+- **Lecteur Vidéo** : Lecture directe des vidéos téléchargées
 
 ## Installation
 
@@ -138,6 +139,7 @@ tiktok/
 ├── main.py                       # Logique scraping (réutilisée)
 ├── requirements.txt              # Dépendances
 ├── templates/
+│   ├── base.html                 # Template de base (héritage)
 │   ├── index.html                # Dashboard
 │   └── profile.html              # Détails profil
 ├── static/                       # Assets statiques (vide pour l'instant)
@@ -226,8 +228,9 @@ curl http://localhost:5000/api/stats
 ## Améliorations Futures
 
 ### Court terme
-- [ ] Vue galerie pour les vidéos (thumbnails)
-- [ ] Lecteur vidéo intégré dans l'interface
+- [x] Vue galerie pour les vidéos (thumbnails)
+- [x] Lecteur vidéo intégré dans l'interface
+- [x] Logs en temps réel (SSE)
 - [ ] Barre de progression en temps réel pour les téléchargements
 - [ ] Filtres et recherche dans la liste des vidéos
 - [ ] Dark mode

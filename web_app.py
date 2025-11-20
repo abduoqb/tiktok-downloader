@@ -1,7 +1,8 @@
 """
 Flask Web Interface for TikTok Scraper
 """
-from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory
+from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory, Response, stream_with_context
+import queue
 import os
 import json
 import threading
@@ -22,7 +23,48 @@ from main import (
 app = Flask(__name__)
 
 # Store background tasks
+# Store background tasks (Legacy support)
 active_tasks = {}
+
+# --- ARCHITECTURE LOGGING ---
+
+# 1. La file d'attente globale (Thread-safe)
+log_queue = queue.Queue()
+
+def emit_log(message, level="info"):
+    """
+    Fonction helper pour pousser un log dans la queue.
+    Levels: 'info' (gris), 'success' (vert), 'error' (rouge), 'warning' (jaune)
+    """
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    data = {
+        "message": message,
+        "level": level,
+        "time": timestamp
+    }
+    log_queue.put(data)
+
+# 2. Route SSE (Générateur)
+@app.route('/stream_logs')
+def stream_logs():
+    def generate():
+        while True:
+            try:
+                # On attend un message (bloquant, mais dans un thread géré par Flask)
+                # timeout=1 permet de vérifier régulièrement si le client est toujours là
+                data = log_queue.get(timeout=1)
+                
+                # Format SSE standard : "data: <json>\n\n"
+                yield f"data: {json.dumps(data)}\n\n"
+            except queue.Empty:
+                # Si pas de log, on envoie un heartbeat (commentaire) pour garder la connexion active
+                yield ": keep-alive\n\n"
+            except GeneratorExit:
+                # Le client s'est déconnecté
+                break
+
+    # stream_with_context est important si on accède à des variables de config Flask
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 @app.route('/')
 def index():
@@ -83,7 +125,7 @@ def get_profiles():
 
 @app.route('/api/extract', methods=['POST'])
 def extract_links():
-    """Extract video links for a profile"""
+    """Extract video links for a profile (Background Task)"""
     data = request.json
     username = data.get('username')
     platform = data.get('platform', 'tiktok')
@@ -92,25 +134,11 @@ def extract_links():
     if not username:
         return jsonify({'error': 'Username required'}), 400
 
-    try:
-        history = load_history(username)
-        videos = get_video_links(username, history, platform, limit)
-
-        if videos:
-            save_links_to_file(username, videos)
-            return jsonify({
-                'success': True,
-                'count': len(videos),
-                'message': f'{len(videos)} new videos found'
-            })
-        else:
-            return jsonify({
-                'success': True,
-                'count': 0,
-                'message': 'No new videos found'
-            })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    thread = threading.Thread(target=background_extract_task, args=(username, platform, limit))
+    thread.daemon = True
+    thread.start()
+    
+    return jsonify({"success": True, "message": f"Scan lancé pour {username}"})
 
 @app.route('/api/download', methods=['POST'])
 def start_download():
@@ -119,32 +147,18 @@ def start_download():
     username = data.get('username')
     platform = data.get('platform', 'tiktok')
     limit = data.get('limit')
-    min_sleep = data.get('min_sleep', 5)
-    max_sleep = data.get('max_sleep', 15)
+    min_sleep = int(data.get('min_sleep', 5))
+    max_sleep = int(data.get('max_sleep', 15))
+    force_update = data.get('force_update', False)
 
     if not username:
         return jsonify({'error': 'Username required'}), 400
 
-    # Start background task
-    task_id = f"{username}_{datetime.now().timestamp()}"
-    thread = threading.Thread(
-        target=download_task,
-        args=(task_id, username, platform, limit, min_sleep, max_sleep)
-    )
+    thread = threading.Thread(target=background_download_task, args=(username, platform, min_sleep, max_sleep, force_update))
+    thread.daemon = True
     thread.start()
 
-    active_tasks[task_id] = {
-        'username': username,
-        'status': 'running',
-        'progress': 0,
-        'total': 0
-    }
-
-    return jsonify({
-        'success': True,
-        'task_id': task_id,
-        'message': 'Download started'
-    })
+    return jsonify({"success": True, "message": f"Téléchargement lancé pour {username}"})
 
 @app.route('/api/task/<task_id>')
 def get_task_status(task_id):
@@ -304,50 +318,110 @@ def calculate_total_size():
 
     return total_size
 
-def download_task(task_id, username, platform, limit, min_sleep, max_sleep):
-    """Background task for downloading videos"""
-    import time
-    import random
+# --- BACKGROUND TASKS ---
 
+def background_extract_task(username, platform, limit):
+    emit_log(f"Démarrage du scan pour {username}...", "info")
     try:
         history = load_history(username)
-        videos = get_video_links(username, history, platform, limit)
+        
+        # On passe un callback custom à get_video_links si on modifie main.py, 
+        # sinon on log juste le début et la fin
+        videos = get_video_links(username, history, platform, limit, callback_log=emit_log)
 
-        active_tasks[task_id]['total'] = len(videos)
-        active_tasks[task_id]['status'] = 'downloading'
+        if videos:
+            save_links_to_file(username, videos)
+            emit_log(f"Scan terminé : {len(videos)} nouvelles vidéos trouvées.", "success")
+        else:
+            emit_log("Scan terminé : Aucune nouvelle vidéo.", "warning")
+            
+    except Exception as e:
+        emit_log(f"Erreur lors du scan : {str(e)}", "error")
 
+def background_download_task(username, platform, min_sleep, max_sleep, force_update=False):
+    """Background task to run the download process."""
+    import random
+    import time
+    import traceback
+    
+    try:
+        emit_log(f"Starting background download task for {username}...", "info")
+        
+        # Ensure user directory exists
+        user_dir = get_user_dir(username)
+        if not os.path.exists(user_dir):
+            os.makedirs(user_dir)
+            emit_log(f"Created directory: {user_dir}", "info")
+
+        # Load history
+        history = load_history(username)
+        emit_log(f"Loaded history with {len(history)} videos.", "info")
+        
+        if force_update:
+            emit_log("⚠️ FORCE UPDATE MODE ENABLED: Will scan all videos.", "warning")
+
+        # Define a callback for logging from main.py
+        def log_callback(msg, level="info"):
+            emit_log(msg, level)
+
+        # 1. Extract Links
+        emit_log(f"Extracting links from {platform}...", "info")
+        videos = get_video_links(
+            username, 
+            history, 
+            platform, 
+            limit=None, 
+            callback_log=log_callback,
+            force_update=force_update
+        )
+        
+        if not videos:
+            emit_log("No new videos found to download.", "warning")
+            return
+
+        emit_log(f"Found {len(videos)} new videos. Saving list...", "success")
+        save_links_to_file(username, videos)
+
+        # 2. Download Videos
+        emit_log(f"Starting download of {len(videos)} videos...", "info")
+        download_count = 0
+        
         for i, video in enumerate(videos):
             video_id = video['id']
             video_url = video['url']
-
+            
+            # Double check history
             if video_id in history:
                 continue
-
-            # Check if slideshow
+            
+            emit_log(f"Processing ({i+1}/{len(videos)}): {video_url}", "info")
+            
+            # Check slideshow
             if is_slideshow(video_url):
+                emit_log("Slideshow detected - saving to JSON (skip download)", "warning")
                 save_to_slideshows(username, video_url, video_id)
                 save_to_history(username, video_id)
-                active_tasks[task_id]['progress'] = i + 1
                 continue
 
-            # Download
+            download_count += 1
             success = download_video(video_url, username, video_id)
-
+            
             if success:
+                emit_log(f"Downloaded: {video_url}", "success")
                 save_to_history(username, video_id)
-
-            active_tasks[task_id]['progress'] = i + 1
-
-            # Sleep between downloads
-            if i < len(videos) - 1:
+                
+                # Sleep
                 sleep_time = random.randint(min_sleep, max_sleep)
+                emit_log(f"Sleeping for {sleep_time}s...", "info")
                 time.sleep(sleep_time)
+            else:
+                emit_log(f"Failed to download: {video_url}", "error")
 
-        active_tasks[task_id]['status'] = 'completed'
+        emit_log("Background task completed!", "success")
 
     except Exception as e:
-        active_tasks[task_id]['status'] = 'error'
-        active_tasks[task_id]['error'] = str(e)
+        emit_log(f"Task failed: {str(e)}", "error")
+        traceback.print_exc()
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000)

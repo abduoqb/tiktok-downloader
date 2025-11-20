@@ -1,359 +1,350 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TikTok Scraper - Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-</head>
-<body class="bg-gray-50 min-h-screen">
-    <!-- Header -->
-    <header class="bg-white shadow-sm border-b border-gray-200">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-            <div class="flex justify-between items-center">
-                <h1 class="text-2xl font-bold text-gray-900">🎬 TikTok Scraper</h1>
-                <div class="flex items-center gap-4">
-                    <button onclick="location.reload()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">
-                        🔄 Actualiser
-                    </button>
-                </div>
-            </div>
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 border border-slate-200 dark:border-slate-700 transition-colors duration-200">
+            <dt class="text-sm font-medium text-slate-500 dark:text-slate-400 truncate">Profils suivis</dt>
+            <dd class="mt-1 text-3xl font-semibold text-slate-900 dark:text-white">{{ profiles|length }}</dd>
         </div>
-    </header>
+        <div class="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 border border-slate-200 dark:border-slate-700 transition-colors duration-200">
+            <dt class="text-sm font-medium text-slate-500 dark:text-slate-400 truncate">Vidéos téléchargées</dt>
+            <dd class="mt-1 text-3xl font-semibold text-indigo-600 dark:text-indigo-400" id="totalVideos">...</dd>
+        </div>
+        <div class="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 border border-slate-200 dark:border-slate-700 transition-colors duration-200">
+            <dt class="text-sm font-medium text-slate-500 dark:text-slate-400 truncate">Espace disque utilisé</dt>
+            <dd class="mt-1 text-3xl font-semibold text-slate-900 dark:text-white" id="diskSpace">...</dd>
+        </div>
+    </div>
 
-    <!-- Main Content -->
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-
-        <!-- Add Profile Section -->
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-            <h2 class="text-lg font-semibold text-gray-900 mb-4">Ajouter un profil</h2>
-
-            <form id="extractForm" class="space-y-3">
-                <div class="flex gap-3 items-end">
-                    <div class="flex-1">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                        <input
-                            type="text"
-                            id="username"
-                            name="username"
-                            placeholder="@username"
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            required
-                        >
+    <!-- Extraction Form -->
+    <div class="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 transition-colors duration-200">
+        <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 rounded-t-lg">
+            <h3 class="text-base font-semibold leading-6 text-slate-900 dark:text-white">Nouvelle extraction</h3>
+        </div>
+        
+        <div class="p-6">
+            <form id="extractForm" class="space-y-6">
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+                    
+                    <div class="md:col-span-5 space-y-1">
+                        <label for="username" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Identifiant / URL</label>
+                        <div class="relative">
+                            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                                <span class="text-slate-500 dark:text-slate-400 sm:text-sm">@</span>
+                            </div>
+                            <input type="text" name="username" id="username" class="block w-full h-10 rounded-md border-0 py-1.5 pl-8 text-slate-900 dark:text-white dark:bg-slate-900 ring-1 ring-inset ring-slate-300 dark:ring-slate-700 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-2 focus:ring-inset focus:ring-indigo-600 dark:focus:ring-indigo-500 sm:text-sm sm:leading-6 shadow-sm transition-colors" placeholder="username" required>
+                        </div>
                     </div>
 
-                    <div class="w-40">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Plateforme</label>
-                        <select
-                            id="platform"
-                            name="platform"
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        >
+                    <div class="md:col-span-3 space-y-1">
+                        <label for="platform" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Plateforme</label>
+                        <select id="platform" name="platform" class="block w-full h-10 rounded-md border-0 py-1.5 pl-3 pr-10 text-slate-900 dark:text-white dark:bg-slate-900 ring-1 ring-inset ring-slate-300 dark:ring-slate-700 focus:ring-2 focus:ring-inset focus:ring-indigo-600 dark:focus:ring-indigo-500 sm:text-sm sm:leading-6 shadow-sm transition-colors">
                             <option value="tiktok">TikTok</option>
-                            <option value="youtube">YouTube</option>
+                            <option value="youtube">YouTube Shorts</option>
                         </select>
                     </div>
 
-                    <div class="w-32">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Limite</label>
-                        <input
-                            type="number"
-                            id="limit"
-                            name="limit"
-                            placeholder="50"
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        >
+                    <div class="md:col-span-2 space-y-1">
+                        <label for="limit" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Limite</label>
+                        <input type="number" name="limit" id="limit" placeholder="50" class="block w-full h-10 rounded-md border-0 py-1.5 text-slate-900 dark:text-white dark:bg-slate-900 ring-1 pl-3 ring-inset ring-slate-300 dark:ring-slate-700 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-2 focus:ring-inset focus:ring-indigo-600 dark:focus:ring-indigo-500 sm:text-sm sm:leading-6 shadow-sm transition-colors">
                     </div>
 
-                    <button
-                        type="submit"
-                        class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                        🔍 Extraire
-                    </button>
-
-                    <button
-                        type="button"
-                        onclick="downloadVideos()"
-                        class="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
-                    >
-                        ⬇️ Télécharger
-                    </button>
+                    <div class="md:col-span-2">
+                        <button type="submit" class="flex w-full h-10 items-center justify-center rounded-md bg-indigo-600 hover:bg-indigo-500 dark:bg-indigo-600 dark:hover:bg-indigo-500 px-3 text-sm font-semibold text-white shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 transition-all">
+                            <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                            Scan
+                        </button>
+                    </div>
                 </div>
 
-                <!-- Advanced options (Sleep times) -->
-                <details class="text-sm">
-                    <summary class="cursor-pointer text-gray-600 hover:text-gray-900">⚙️ Options avancées</summary>
-                    <div class="mt-3 flex gap-3 items-end pl-4">
-                        <div class="w-32">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Pause min (s)</label>
-                            <input
-                                type="number"
-                                id="min_sleep"
-                                name="min_sleep"
-                                value="5"
-                                min="1"
-                                max="60"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            >
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-slate-100 dark:border-slate-700 pt-4">
+                    <details class="group">
+                        <summary class="flex cursor-pointer items-center text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition select-none">
+                            <svg class="mr-2 h-4 w-4 text-slate-400 dark:text-slate-500 group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                            <span>Configuration (Anti-ban)</span>
+                        </summary>
+                        <div class="mt-3 pl-6 grid grid-cols-2 gap-4 w-full sm:w-64">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Min (sec)</label>
+                                <input type="number" id="min_sleep" value="5" class="block w-full h-8 rounded-md border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-xs transition-colors">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Max (sec)</label>
+                                <input type="number" id="max_sleep" value="15" class="block w-full h-8 rounded-md border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-xs transition-colors">
+                            </div>
                         </div>
-                        <div class="w-32">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Pause max (s)</label>
-                            <input
-                                type="number"
-                                id="max_sleep"
-                                name="max_sleep"
-                                value="15"
-                                min="1"
-                                max="120"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            >
+                    </details>
+
+                    <div class="sm:col-span-2 md:col-span-12 flex flex-col md:flex-row justify-end items-center gap-4">
+                        <div class="flex items-center space-x-2">
+                            <input type="checkbox" id="forceUpdate" class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600">
+                            <label for="forceUpdate" class="text-sm font-medium text-gray-900 dark:text-gray-300">Mode MAJ (Forcer la vérification complète)</label>
                         </div>
-                        <div class="text-xs text-gray-500 flex-1">
-                            Délais aléatoires entre chaque téléchargement pour éviter les bannissements
-                        </div>
+                        <button type="button" onclick="downloadVideos()" class="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-semibold rounded-md shadow-lg text-white bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all transform hover:scale-105">
+                            <svg class="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            Télécharger
+                        </button>
                     </div>
-                </details>
+                </div>
             </form>
-
-            <div id="message" class="mt-4 hidden"></div>
+            <div id="message" class="mt-4 hidden rounded-md p-4 text-sm font-medium animate-fade-in"></div>
         </div>
+    </div>
 
-        <!-- Stats Section -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6" id="statsContainer">
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <div class="text-sm font-medium text-gray-600">Profils suivis</div>
-                <div class="text-2xl font-bold text-gray-900 mt-1">{{ profiles|length }}</div>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <div class="lg:col-span-2 bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col transition-colors duration-200">
+            <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                <h2 class="text-lg font-semibold text-slate-900 dark:text-white">Profils gérés</h2>
+                <span class="inline-flex items-center rounded-md bg-slate-100 dark:bg-slate-700 px-2 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 ring-1 ring-inset ring-slate-500/10 dark:ring-slate-400/20">{{ profiles|length }}</span>
             </div>
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <div class="text-sm font-medium text-gray-600">Total vidéos</div>
-                <div class="text-2xl font-bold text-gray-900 mt-1">{{ profiles|sum(attribute='video_count') }}</div>
-            </div>
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <div class="text-sm font-medium text-gray-600">Espace disque</div>
-                <div class="text-2xl font-bold text-gray-900 mt-1" id="diskSpace">-</div>
-            </div>
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <div class="text-sm font-medium text-gray-600">Statut</div>
-                <div class="text-2xl font-bold text-green-600 mt-1">🟢 Actif</div>
-            </div>
-        </div>
-
-        <!-- Profiles List -->
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div class="px-6 py-4 border-b border-gray-200">
-                <h2 class="text-lg font-semibold text-gray-900">Profils</h2>
-            </div>
-
-            <div class="divide-y divide-gray-200" id="profilesList">
+            
+            <div class="divide-y divide-slate-100 dark:divide-slate-700 overflow-hidden" id="profilesList">
                 {% if profiles %}
                     {% for profile in profiles %}
-                    <div class="px-6 py-4 hover:bg-gray-50 transition">
+                    <div onclick="window.location.href='/profile/{{ profile.username }}'" class="p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors group cursor-pointer">
                         <div class="flex items-center justify-between">
-                            <div class="flex-1">
-                                <div class="flex items-center gap-3">
-                                    <div class="w-2 h-2 bg-green-500 rounded-full"></div>
-                                    <h3 class="text-lg font-medium text-gray-900">{{ profile.username }}</h3>
-                                    <span class="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">TikTok</span>
+                            <div class="flex items-center min-w-0 gap-3">
+                                <div class="flex-shrink-0">
+                                    <span class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-700 ring-1 ring-slate-200 dark:ring-slate-600">
+                                        <span class="font-medium text-slate-600 dark:text-slate-300 leading-none">{{ profile.username[:2].upper() }}</span>
+                                    </span>
                                 </div>
-                                <div class="mt-1 text-sm text-gray-600">
-                                    📹 {{ profile.video_count }} vidéos
-                                    {% if profile.last_scan %}
-                                    • Dernier scan: {{ profile.last_scan }}
-                                    {% endif %}
+                                <div class="min-w-0">
+                                    <p class="text-sm font-semibold text-slate-900 dark:text-white truncate">@{{ profile.username }}</p>
+                                    <p class="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                                        <span>{{ profile.video_count }} vidéos</span>
+                                        {% if profile.last_scan %}
+                                            <span class="text-slate-300 dark:text-slate-600">|</span>
+                                            <span>{{ profile.last_scan }}</span>
+                                        {% endif %}
+                                    </p>
                                 </div>
                             </div>
-
-                            <div class="flex items-center gap-2">
-                                <a
-                                    href="/profile/{{ profile.username }}"
-                                    class="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
-                                >
-                                    📊 Détails
+                            
+                            <div class="flex items-center gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                                
+                                <a href="/profile/{{ profile.username }}" onclick="event.stopPropagation()" class="p-2 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition relative z-10" title="Détails">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                    </svg>
                                 </a>
-                                <button
-                                    onclick="syncProfile('{{ profile.username }}')"
-                                    class="px-4 py-2 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
-                                >
-                                    ⬇️ Sync
+
+                                <button onclick="event.stopPropagation(); syncProfile('{{ profile.username }}')" class="p-2 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-full transition relative z-10" title="Mise à jour">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
                                 </button>
-                                <button
-                                    onclick="deleteProfile('{{ profile.username }}')"
-                                    class="px-4 py-2 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200"
-                                >
-                                    🗑️
+
+                                <button onclick="event.stopPropagation(); deleteProfile('{{ profile.username }}')" class="p-2 text-slate-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-full transition relative z-10" title="Supprimer">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
                                 </button>
+
                             </div>
                         </div>
                     </div>
                     {% endfor %}
                 {% else %}
-                    <div class="px-6 py-12 text-center text-gray-500">
-                        Aucun profil suivi. Ajoutez-en un pour commencer !
+                    <div class="px-6 py-12 text-center">
+                        <svg class="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                        </svg>
+                        <h3 class="mt-2 text-sm font-semibold text-slate-900 dark:text-white">Aucun profil</h3>
+                        <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Commencez par ajouter un profil ci-dessus.</p>
                     </div>
                 {% endif %}
             </div>
         </div>
 
-        <!-- Activity Log -->
-        <div class="mt-6 bg-white rounded-lg shadow-sm border border-gray-200">
-            <div class="px-6 py-4 border-b border-gray-200">
-                <h2 class="text-lg font-semibold text-gray-900">Activité récente</h2>
+        <div class="lg:col-span-1 bg-slate-900 dark:bg-slate-950 rounded-lg shadow-lg border border-slate-800 dark:border-slate-800 flex flex-col overflow-hidden h-[600px]">
+            <div class="px-4 py-3 border-b border-slate-800 bg-slate-950/50 flex justify-between items-center">
+                <div class="text-xs font-mono font-medium text-slate-400 flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3" /></svg>
+                    TERMINAL
+                </div>
+                <div class="flex gap-1.5">
+                    <div class="w-2.5 h-2.5 rounded-full bg-red-500/80"></div>
+                    <div class="w-2.5 h-2.5 rounded-full bg-yellow-500/80"></div>
+                    <div class="w-2.5 h-2.5 rounded-full bg-green-500/80"></div>
+                </div>
             </div>
-            <div class="px-6 py-4 max-h-64 overflow-y-auto" id="activityLog">
-                <div class="text-sm text-gray-500">Aucune activité récente</div>
+            <div class="flex-1 p-4 overflow-y-auto font-mono text-xs space-y-1" id="activityLog">
+                <div class="text-slate-500">> Initialisation du système...</div>
+                <div class="text-slate-500">> Prêt à l'emploi.</div>
             </div>
         </div>
-    </main>
+    </div>
+</div>
+{% endblock %}
 
+{% block scripts %}
     <script>
-        // Load stats on page load
-        fetch('/api/stats')
-            .then(r => r.json())
-            .then(data => {
-                document.getElementById('diskSpace').textContent = data.total_size_gb + ' GB';
-            });
+        // --- UI Helpers ---
+        function showNotification(text, type) {
+            const div = document.getElementById('message');
+            div.classList.remove('hidden', 'bg-blue-50', 'text-blue-700', 'bg-green-50', 'text-green-700', 'bg-red-50', 'text-red-700', 'dark:bg-blue-900/30', 'dark:text-blue-300', 'dark:bg-green-900/30', 'dark:text-green-300', 'dark:bg-red-900/30', 'dark:text-red-300');
+            
+            if (type === 'success') div.classList.add('bg-green-50', 'text-green-700', 'border', 'border-green-200', 'dark:bg-green-900/30', 'dark:text-green-300', 'dark:border-green-800');
+            else if (type === 'error') div.classList.add('bg-red-50', 'text-red-700', 'border', 'border-red-200', 'dark:bg-red-900/30', 'dark:text-red-300', 'dark:border-red-800');
+            else div.classList.add('bg-blue-50', 'text-blue-700', 'border', 'border-blue-200', 'dark:bg-blue-900/30', 'dark:text-blue-300', 'dark:border-blue-800');
 
-        // Extract form handler
+            div.innerHTML = text;
+            div.classList.remove('hidden');
+        }
+
+        // --- SSE Logging System ---
+        let eventSource = null;
+
+        function startLogStream() {
+            if (eventSource) return;
+
+            eventSource = new EventSource('/stream_logs');
+
+            eventSource.onopen = function() {
+                addLog("Connexion au terminal établie.", "text-green-500");
+            };
+
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                
+                let colorClass = "text-slate-300";
+                if (data.level === 'error') colorClass = "text-red-400 font-bold";
+                if (data.level === 'warning') colorClass = "text-yellow-400";
+                if (data.level === 'success') colorClass = "text-green-400";
+
+                addLog(data.message, colorClass, data.time);
+            };
+
+            eventSource.onerror = function() {
+                // Auto-reconnect handled by browser
+            };
+        }
+
+        function addLog(message, colorClass = 'text-slate-300', time = null) {
+            const logDiv = document.getElementById('activityLog');
+            
+            if (!time) {
+                const now = new Date();
+                time = now.toLocaleTimeString();
+            }
+
+            const entry = document.createElement('div');
+            entry.className = `font-mono text-xs py-0.5 border-b border-slate-800/50 ${colorClass} animate-fade-in break-all`;
+            entry.innerHTML = `<span class="opacity-50 mr-2">[${time}]</span>${message}`;
+            
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        // --- Initialization ---
+        document.addEventListener("DOMContentLoaded", () => {
+            startLogStream();
+            
+            fetch('/api/stats')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('diskSpace').textContent = data.total_size_gb + ' GB';
+                    document.getElementById('totalVideos').textContent = data.total_videos;
+                }).catch(e => console.log("Stats offline"));
+        });
+
+        // --- Event Handlers ---
+        
+        // Extraction Form
         document.getElementById('extractForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-
             const username = document.getElementById('username').value.replace('@', '');
             const platform = document.getElementById('platform').value;
             const limit = document.getElementById('limit').value || null;
 
-            const messageDiv = document.getElementById('message');
-            messageDiv.className = 'mt-4 p-4 rounded-md bg-blue-50 text-blue-700';
-            messageDiv.textContent = 'Extraction en cours...';
-            messageDiv.classList.remove('hidden');
-
+            showNotification('🔍 Recherche et extraction en cours...', 'info');
+            
             try {
                 const response = await fetch('/api/extract', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username, platform, limit: limit ? parseInt(limit) : null })
                 });
-
                 const data = await response.json();
 
                 if (data.success) {
-                    messageDiv.className = 'mt-4 p-4 rounded-md bg-green-50 text-green-700';
-                    messageDiv.textContent = data.message;
-                    addLog(`✅ ${data.message} pour ${username}`);
-
-                    // Reload page after 2 seconds
+                    showNotification(data.message, 'success');
+                    // On attend un peu pour laisser l'utilisateur voir les logs avant de reload
                     setTimeout(() => location.reload(), 2000);
                 } else {
-                    messageDiv.className = 'mt-4 p-4 rounded-md bg-red-50 text-red-700';
-                    messageDiv.textContent = data.error || 'Erreur inconnue';
+                    showNotification(data.error, 'error');
                 }
             } catch (error) {
-                messageDiv.className = 'mt-4 p-4 rounded-md bg-red-50 text-red-700';
-                messageDiv.textContent = 'Erreur: ' + error.message;
+                showNotification('Erreur connexion serveur', 'error');
             }
         });
 
+        // Download All
         async function downloadVideos() {
             const username = document.getElementById('username').value.replace('@', '');
-            const platform = document.getElementById('platform').value;
-            const limit = document.getElementById('limit').value || null;
             const min_sleep = parseInt(document.getElementById('min_sleep').value) || 5;
             const max_sleep = parseInt(document.getElementById('max_sleep').value) || 15;
+            const forceUpdate = document.getElementById('forceUpdate').checked;
 
-            if (!username) {
-                alert('Veuillez entrer un username');
-                return;
-            }
+            if (!username) { showNotification('Veuillez entrer un pseudo d\'abord', 'error'); return; }
 
-            if (min_sleep > max_sleep) {
-                alert('La pause minimale doit être inférieure à la pause maximale');
-                return;
-            }
-
-            const messageDiv = document.getElementById('message');
-            messageDiv.className = 'mt-4 p-4 rounded-md bg-blue-50 text-blue-700';
-            messageDiv.textContent = `Téléchargement démarré (pauses: ${min_sleep}-${max_sleep}s)...`;
-            messageDiv.classList.remove('hidden');
+            showNotification(`⬇️ Lancement du téléchargement (Force: ${forceUpdate})...`, 'info');
 
             try {
                 const response = await fetch('/api/download', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username,
-                        platform,
-                        limit: limit ? parseInt(limit) : null,
-                        min_sleep: min_sleep,
-                        max_sleep: max_sleep
+                    body: JSON.stringify({ 
+                        username, 
+                        platform: document.getElementById('platform').value,
+                        min_sleep, 
+                        max_sleep,
+                        force_update: forceUpdate
                     })
                 });
-
                 const data = await response.json();
-
-                if (data.success) {
-                    messageDiv.className = 'mt-4 p-4 rounded-md bg-green-50 text-green-700';
-                    messageDiv.textContent = 'Téléchargement en cours... (vérifiez les logs)';
-                    addLog(`⬇️ Téléchargement démarré pour ${username} (pauses: ${min_sleep}-${max_sleep}s)`);
-                }
-            } catch (error) {
-                messageDiv.className = 'mt-4 p-4 rounded-md bg-red-50 text-red-700';
-                messageDiv.textContent = 'Erreur: ' + error.message;
+                if(data.success) showNotification('Téléchargement démarré en arrière-plan', 'success');
+            } catch (e) {
+                showNotification(e.message, 'error');
             }
         }
 
+        // Sync Profile
         async function syncProfile(username) {
-            addLog(`🔄 Synchronisation de ${username}...`);
-
+            showNotification(`🔄 Mise à jour rapide de ${username}...`, 'info');
             try {
-                const response = await fetch('/api/download', {
+                await fetch('/api/download', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username,
-                        platform: 'tiktok',
-                        min_sleep: 5,
-                        max_sleep: 15
-                    })
+                    body: JSON.stringify({ username, platform: 'tiktok', min_sleep: 5, max_sleep: 15, force_update: false })
                 });
-
-                const data = await response.json();
-                if (data.success) {
-                    addLog(`✅ Synchronisation démarrée pour ${username}`);
-                }
-            } catch (error) {
-                addLog(`❌ Erreur: ${error.message}`);
-            }
+            } catch (e) { showNotification('Erreur Sync', 'error'); }
         }
 
+        // Delete Profile
         async function deleteProfile(username) {
-            if (!confirm(`Êtes-vous sûr de vouloir supprimer ${username} ?`)) {
-                return;
-            }
-
+            if (!confirm(`Supprimer l'historique de ${username} ?`)) return;
             try {
-                const response = await fetch(`/api/profile/${username}/delete`, {
-                    method: 'DELETE'
-                });
-
-                const data = await response.json();
+                const res = await fetch(`/api/profile/${username}/delete`, { method: 'DELETE' });
+                const data = await res.json();
                 if (data.success) {
-                    addLog(`🗑️ ${username} supprimé`);
+                    addLog(`DELETE: ${username} supprimé`, 'text-red-400');
                     location.reload();
                 }
-            } catch (error) {
-                alert('Erreur: ' + error.message);
-            }
-        }
-
-        function addLog(message) {
-            const logDiv = document.getElementById('activityLog');
-            const now = new Date().toLocaleTimeString();
-            const entry = document.createElement('div');
-            entry.className = 'text-sm text-gray-700 py-1';
-            entry.textContent = `[${now}] ${message}`;
-            logDiv.insertBefore(entry, logDiv.firstChild);
+            } catch (e) { alert('Erreur suppression'); }
         }
     </script>
-</body>
-</html>
+{% endblock %}

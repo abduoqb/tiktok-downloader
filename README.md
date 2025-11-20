@@ -9,6 +9,7 @@ Un outil CLI Python pour extraire et télécharger des vidéos depuis TikTok et 
 - Téléchargement avec retry automatique (3 tentatives)
 - Gestion d'historique JSON pour éviter les doublons
 - Support TikTok et YouTube Shorts
+- **Interface Web** : Dashboard complet avec logs en temps réel
 
 🧠 **Intelligence**
 - **Mode incrémental smart** : S'arrête après 10 vidéos consécutives déjà connues
@@ -27,12 +28,22 @@ Un outil CLI Python pour extraire et télécharger des vidéos depuis TikTok et 
 - `yt-dlp`
 
 ```bash
-pip install yt-dlp
+pip install yt-dlp flask
 ```
 
 ## Utilisation
 
-### Syntaxe
+### Interface Web (Recommandé)
+
+1. Lancez le serveur :
+   ```bash
+   python web_app.py
+   ```
+2. Ouvrez `http://localhost:5000` dans votre navigateur.
+
+### Ligne de Commande (CLI)
+
+#### Syntaxe
 
 ```bash
 python main.py <username_ou_url> [options]
