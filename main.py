@@ -253,6 +253,28 @@ def download_video(video_url, username, video_id, retries=3):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([video_url])
             
+            # Post-process: Clean up duplicate IDs in filename
+            import glob
+            import re
+            
+            # Find file with this video ID
+            pattern = f'{output_dir}/*[{video_id}]*'
+            files = glob.glob(pattern)
+            
+            for file_path in files:
+                if os.path.isfile(file_path):
+                    old_name = os.path.basename(file_path)
+                    # Remove patterns like "TikTok_video_7574449625948491030" before the bracketed ID
+                    # Pattern: remove "TikTok_video_XXXXX_" if XXXXX matches the bracketed ID
+                    new_name = re.sub(rf'TikTok_video_{video_id}_(\[{video_id}\])', r'\1', old_name)
+                    # Also remove trailing underscores before brackets
+                    new_name = re.sub(r'_+(\[)', r'\1', new_name)
+                    
+                    if new_name != old_name:
+                        new_path = os.path.join(output_dir, new_name)
+                        os.rename(file_path, new_path)
+                        print(f"Renamed: {old_name} → {new_name}")
+            
             # Post-process: organize slideshows
             organize_slideshow(output_dir, video_id)
             
