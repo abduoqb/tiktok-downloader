@@ -293,8 +293,8 @@ def save_links_to_file(username, videos):
         print(f"Error saving to file: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Extract and download videos from a user profile.")
-    parser.add_argument("username", help="The username (pseudo) of the content creator.")
+    parser = argparse.ArgumentParser(description="Extract and download videos from a user profile or single URL.")
+    parser.add_argument("username_or_url", help="The username (pseudo) or a direct TikTok URL.")
     parser.add_argument("--platform", default="tiktok", help="Target platform (default: tiktok).")
     parser.add_argument("--download", action="store_true", help="Download the videos after extraction.")
     parser.add_argument("--min-sleep", type=int, default=5, help="Minimum sleep time in seconds (default: 5).")
@@ -303,20 +303,67 @@ def main():
     
     args = parser.parse_args()
     
+    # Check if input is a URL or username
+    is_url = "tiktok.com" in args.username_or_url or "http" in args.username_or_url
+    
+    if is_url:
+        # Single URL mode
+        print(f"Single URL mode detected: {args.username_or_url}")
+        
+        # Extract username from URL for folder organization
+        # Format: https://www.tiktok.com/@username/video/123
+        try:
+            username = args.username_or_url.split('@')[1].split('/')[0]
+        except:
+            username = "single_downloads"
+        
+        user_dir = get_user_dir(username)
+        os.makedirs(user_dir, exist_ok=True)
+        
+        # Check if it's a slideshow
+        print("Checking if slideshow...")
+        if is_slideshow(args.username_or_url):
+            print("⚠️  Slideshow detected - saving to slideshows.json")
+            # Extract video ID from URL
+            try:
+                video_id = args.username_or_url.split('/video/')[1].split('?')[0]
+            except:
+                video_id = "unknown"
+            save_to_slideshows(username, args.username_or_url, video_id)
+            print("Slideshow saved. Exiting.")
+            return
+        
+        # Download the video
+        print("Downloading video...")
+        try:
+            video_id = args.username_or_url.split('/video/')[1].split('?')[0]
+        except:
+            video_id = "unknown"
+        
+        success = download_video(args.username_or_url, username, video_id)
+        if success:
+            print(f"✅ Download complete! Saved to {user_dir}")
+        else:
+            print("❌ Download failed.")
+        return
+    
+    # Username mode (original behavior)
+    username = args.username_or_url
+    
     # Create user directory if it doesn't exist
-    user_dir = get_user_dir(args.username)
+    user_dir = get_user_dir(username)
     if not os.path.exists(user_dir):
         os.makedirs(user_dir)
         print(f"Created directory: {user_dir}")
 
     # Load history FIRST for incremental extraction
-    history = load_history(args.username)
+    history = load_history(username)
 
-    print(f"Starting extraction for user: {args.username} on {args.platform}...")
-    videos = get_video_links(args.username, history, args.platform, args.limit)
+    print(f"Starting extraction for user: {username} on {args.platform}...")
+    videos = get_video_links(username, history, args.platform, args.limit)
     
     if videos:
-        save_links_to_file(args.username, videos)
+        save_links_to_file(username, videos)
         
         if args.download:
             print(f"\nStarting download of {len(videos)} new videos...")
@@ -335,16 +382,16 @@ def main():
                 print(f"Checking ({i+1}/{len(videos)}): {video_url}")
                 if is_slideshow(video_url):
                     print("⚠️  Slideshow detected - saving to slideshows.json and skipping download")
-                    save_to_slideshows(args.username, video_url, video_id)
-                    save_to_history(args.username, video_id)  # Mark as processed
+                    save_to_slideshows(username, video_url, video_id)
+                    save_to_history(username, video_id)  # Mark as processed
                     continue
                 
                 download_count += 1
                 print(f"Downloading ({download_count}): {video_url}")
-                success = download_video(video_url, args.username, video_id)
+                success = download_video(video_url, username, video_id)
                 
                 if success:
-                    save_to_history(args.username, video_id)
+                    save_to_history(username, video_id)
                     # Sleep to avoid rate limiting
                     sleep_time = random.randint(args.min_sleep, args.max_sleep)
                     print(f"Sleeping for {sleep_time} seconds...")
