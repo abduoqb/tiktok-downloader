@@ -1,7 +1,7 @@
 """
 Flask Web Interface for TikTok Scraper
 """
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory
 import os
 import json
 import threading
@@ -34,6 +34,22 @@ def profile_details(username):
     """Profile details page"""
     profile_data = get_profile_data(username)
     return render_template('profile.html', profile=profile_data)
+
+@app.route('/video/<username>/<filename>')
+def serve_video(username, filename):
+    """Serve video files for playback"""
+    # Security: prevent path traversal
+    if '..' in username or '..' in filename:
+        return jsonify({'error': 'Invalid path'}), 400
+
+    user_dir = get_user_dir(username)
+
+    # Check if file exists
+    file_path = os.path.join(user_dir, filename)
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'Video not found'}), 404
+
+    return send_from_directory(user_dir, filename)
 
 @app.route('/api/profiles')
 def get_profiles():

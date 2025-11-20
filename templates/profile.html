@@ -90,7 +90,8 @@
 
             <div id="videosContainer" class="p-6">
                 {% if profile.videos %}
-                    <div class="space-y-3">
+                    <!-- List View (default) -->
+                    <div id="listView" class="space-y-3">
                         {% for video in profile.videos %}
                         <div class="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
                             <div class="flex-1">
@@ -101,17 +102,71 @@
                             </div>
                             <div class="flex gap-2">
                                 <button
-                                    onclick="alert('Fonctionnalité à venir: lecteur intégré')"
+                                    onclick="playVideoInline('{{ video.filename }}')"
                                     class="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
                                 >
                                     🎬 Lire
                                 </button>
+                                <a
+                                    href="/video/{{ profile.username }}/{{ video.filename }}"
+                                    download="{{ video.filename }}"
+                                    class="px-3 py-1 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200"
+                                >
+                                    ⬇️ Télécharger
+                                </a>
                                 <button
                                     onclick="copyFilePath('{{ video.filename }}')"
                                     class="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
                                 >
                                     📋 Copier
                                 </button>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <!-- Gallery View (hidden by default) -->
+                    <div id="galleryView" class="hidden grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {% for video in profile.videos %}
+                        <div class="video-card relative rounded-lg overflow-hidden border border-gray-200 hover:border-blue-400 transition group">
+                            <!-- Video Player -->
+                            <div class="relative bg-black" style="aspect-ratio: 9 / 16;">
+                                <video
+                                    class="video-player w-full h-full object-cover cursor-pointer"
+                                    src="/video/{{ profile.username }}/{{ video.filename }}"
+                                    preload="metadata"
+                                    onclick="togglePlay(this)"
+                                    data-filename="{{ video.filename }}"
+                                >
+                                    Votre navigateur ne supporte pas la lecture vidéo.
+                                </video>
+
+                                <!-- Play overlay -->
+                                <div class="play-overlay absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                    <div class="text-white text-6xl">▶️</div>
+                                </div>
+
+                                <!-- Download button overlay -->
+                                <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <a
+                                        href="/video/{{ profile.username }}/{{ video.filename }}"
+                                        download="{{ video.filename }}"
+                                        onclick="event.stopPropagation()"
+                                        class="inline-block px-3 py-1 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 shadow-lg"
+                                    >
+                                        ⬇️
+                                    </a>
+                                </div>
+                            </div>
+
+                            <!-- Video info -->
+                            <div class="p-3 bg-white">
+                                <h3 class="text-sm font-medium text-gray-900 truncate" title="{{ video.filename }}">
+                                    {{ video.filename[:30] }}{% if video.filename|length > 30 %}...{% endif %}
+                                </h3>
+                                <p class="text-xs text-gray-600 mt-1">
+                                    {{ video.size_mb }} MB • {{ video.date.split(' ')[0] }}
+                                </p>
                             </div>
                         </div>
                         {% endfor %}
@@ -192,25 +247,90 @@
         }
 
         function renderVideos() {
-            const container = document.getElementById('videosContainer');
+            const listView = document.getElementById('listView');
+            const galleryView = document.getElementById('galleryView');
             const listBtn = document.getElementById('listViewBtn');
             const gridBtn = document.getElementById('gridViewBtn');
 
             if (viewMode === 'list') {
+                listView.classList.remove('hidden');
+                galleryView.classList.add('hidden');
                 listBtn.className = 'px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded';
                 gridBtn.className = 'px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded';
+
+                // Pause all videos when switching to list view
+                pauseAllVideos();
             } else {
+                listView.classList.add('hidden');
+                galleryView.classList.remove('hidden');
                 listBtn.className = 'px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded';
                 gridBtn.className = 'px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded';
-            }
 
-            // Grid view implementation (placeholder)
-            if (viewMode === 'grid') {
-                container.innerHTML = '<div class="text-center py-12 text-gray-500">Vue galerie à venir...</div>';
-            } else {
-                location.reload(); // Reload to show list view
+                // Setup video event listeners
+                setupVideoPlayers();
             }
         }
+
+        function togglePlay(videoElement) {
+            // Pause all other videos first
+            pauseAllVideos();
+
+            // Toggle current video
+            if (videoElement.paused) {
+                videoElement.play();
+            } else {
+                videoElement.pause();
+            }
+        }
+
+        function pauseAllVideos() {
+            document.querySelectorAll('.video-player').forEach(video => {
+                video.pause();
+            });
+        }
+
+        function setupVideoPlayers() {
+            document.querySelectorAll('.video-player').forEach(video => {
+                // Auto-pause other videos when this one plays
+                video.addEventListener('play', function() {
+                    document.querySelectorAll('.video-player').forEach(v => {
+                        if (v !== this) {
+                            v.pause();
+                        }
+                    });
+                });
+
+                // Show controls when playing
+                video.addEventListener('play', function() {
+                    this.controls = true;
+                });
+
+                // Hide controls when paused
+                video.addEventListener('pause', function() {
+                    this.controls = false;
+                });
+            });
+        }
+
+        function playVideoInline(filename) {
+            // Switch to gallery view
+            viewMode = 'grid';
+            renderVideos();
+
+            // Find and play the video
+            setTimeout(() => {
+                const video = document.querySelector(`video[data-filename="${filename}"]`);
+                if (video) {
+                    video.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    setTimeout(() => togglePlay(video), 300);
+                }
+            }, 100);
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            setupVideoPlayers();
+        });
     </script>
 </body>
 </html>
