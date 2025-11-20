@@ -313,29 +313,30 @@ def download_video(video_url, username, video_id, retries=3):
                 return False
 
 def save_links_to_file(username, videos):
-    """Saves the list of links to a text file in the user's directory."""
+    """Saves unique video links to a text file in the user's directory."""
     output_dir = get_user_dir(username)
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
     filename = os.path.join(output_dir, f"{username}_videos.txt")
     try:
-        # Append mode 'a' might be better for incremental, but 'w' keeps the file clean with only the latest batch?
-        # Actually, usually users want a full list or just the new ones. 
-        # Let's stick to overwriting with the NEW batch for now, or appending?
-        # The prompt implies "create a list", usually implies the result of the current run.
-        # But if we stop early, we only get new videos.
-        # Let's append to the file if it exists, so we keep a master list?
-        # Or maybe just write the new ones. Let's write the new ones for now to avoid massive duplicates in the text file if we ran without history check before.
-        # Wait, if we run incremental, 'videos' only has new videos.
-        # If we overwrite, we lose the old links in the text file.
-        # Let's use append mode 'a' so the text file becomes a complete archive.
+        # Read existing links if file exists
+        existing_links = set()
+        if os.path.exists(filename):
+            with open(filename, "r", encoding="utf-8") as f:
+                existing_links = set(line.strip() for line in f if line.strip())
         
-        mode = "a" if os.path.exists(filename) else "w"
-        with open(filename, mode, encoding="utf-8") as f:
-            for video in videos:
-                f.write(video['url'] + "\n")
-        print(f"Successfully added {len(videos)} links to {os.path.abspath(filename)}")
+        # Add new links
+        new_links = [video['url'] for video in videos]
+        all_links = existing_links.union(new_links)
+        
+        # Write all unique links back (sorted for consistency)
+        with open(filename, "w", encoding="utf-8") as f:
+            for link in sorted(all_links):
+                f.write(link + "\n")
+        
+        added_count = len(all_links) - len(existing_links)
+        print(f"Successfully saved {len(all_links)} unique links ({added_count} new) to {os.path.abspath(filename)}")
     except Exception as e:
         print(f"Error saving to file: {e}")
 

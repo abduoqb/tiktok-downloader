@@ -122,7 +122,7 @@
                             </div>
                             
                             <div class="video-player-container hidden mt-4 bg-black rounded-lg overflow-hidden">
-                                <video class="w-full max-h-[60vh] mx-auto" controls preload="none" src="/video/{{ profile.username }}/{{ video.filename }}"></video>
+                                <video class="lazy-video w-full max-h-[60vh] mx-auto" controls preload="none" data-src="/video/{{ profile.username }}/{{ video.filename }}"></video>
                             </div>
                         </div>
                     </li>
@@ -135,9 +135,9 @@
                 <div class="group relative bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition overflow-hidden">
                     <div class="aspect-[9/16] bg-slate-900 relative group-hover:opacity-100 transition">
                         <video 
-                            class="video-player w-full h-full object-contain cursor-pointer" 
-                            src="/video/{{ profile.username }}/{{ video.filename }}" 
-                            preload="metadata" 
+                            class="lazy-video video-player w-full h-full object-contain cursor-pointer" 
+                            data-src="/video/{{ profile.username }}/{{ video.filename }}" 
+                            preload="none" 
                             onclick="togglePlay(this)"
                             data-filename="{{ video.filename }}"
                         ></video>
@@ -249,7 +249,6 @@
         }
 
         function openFolder() {
-            // Pour UX web, on simule un prompt car on ne peut pas ouvrir l'explorateur directement depuis le navigateur pour des raisons de sécu
             prompt("Chemin du dossier local :", "downloads/{{ profile.username }}/");
         }
 
@@ -259,7 +258,6 @@
                 const response = await fetch(`/api/video/{{ profile.username }}/${encodeURIComponent(filename)}/delete`, { method: 'DELETE' });
                 const data = await response.json();
                 if (data.success) {
-                    // Visual removal without reload if possible, else reload
                     location.reload();
                 } else {
                     alert('Erreur: ' + data.error);
@@ -272,14 +270,11 @@
         // --- Video Logic ---
         function togglePlay(video) {
             const isPlaying = !video.paused;
-            // Pause all others
             document.querySelectorAll('video').forEach(v => { if(v !== video) v.pause(); });
             
-            // Toggle current
             if (isPlaying) video.pause();
             else video.play();
             
-            // Update Grid Overlay visibility logic
             const overlay = video.parentElement.querySelector('.play-overlay');
             if(overlay) overlay.style.display = video.paused ? 'flex' : 'none';
         }
@@ -292,12 +287,10 @@
             const pauseIcon = btn.querySelector('.pause-icon');
 
             if (container.classList.contains('hidden')) {
-                // Open
                 document.querySelectorAll('.video-player-container').forEach(c => {
                     c.classList.add('hidden'); 
                     c.querySelector('video').pause();
                 });
-                // Reset icons
                 document.querySelectorAll('.pause-icon').forEach(i => i.classList.add('hidden'));
                 document.querySelectorAll('.play-icon').forEach(i => i.classList.remove('hidden'));
 
@@ -306,7 +299,6 @@
                 playIcon.classList.add('hidden');
                 pauseIcon.classList.remove('hidden');
             } else {
-                // Close
                 container.classList.add('hidden');
                 video.pause();
                 playIcon.classList.remove('hidden');
@@ -314,8 +306,36 @@
             }
         }
 
+        // --- Lazy Loading with IntersectionObserver ---
+        function initLazyLoading() {
+            const observer = new IntersectionObserver((entries, observer) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const video = entry.target;
+                        
+                        if (video.dataset.src) {
+                            video.src = video.dataset.src;
+                            video.load();
+                            
+                            video.classList.remove('lazy-video');
+                            observer.unobserve(video);
+                        }
+                    }
+                });
+            }, {
+                rootMargin: "200px"
+            });
+
+            document.querySelectorAll('.lazy-video').forEach(video => {
+                observer.observe(video);
+            });
+        }
+
         // Auto-handle grid overlays on play/pause events
         document.addEventListener('DOMContentLoaded', () => {
+            // Initialize lazy loading
+            initLazyLoading();
+            
             document.querySelectorAll('video').forEach(v => {
                 v.addEventListener('play', () => {
                     const overlay = v.parentElement.querySelector('.play-overlay');
@@ -325,11 +345,9 @@
                     const overlay = v.parentElement.querySelector('.play-overlay');
                     if(overlay) overlay.style.display = 'flex';
                 });
-                // Reset button state in list view if ended
                 v.addEventListener('ended', () => {
                     const overlay = v.parentElement.querySelector('.play-overlay');
                     if(overlay) overlay.style.display = 'flex';
-                    // If inside list view, reset icons
                     const li = v.closest('li');
                     if(li) {
                         li.querySelector('.play-icon').classList.remove('hidden');
