@@ -134,17 +134,27 @@
                                 <video
                                     class="video-player w-full h-full object-contain cursor-pointer"
                                     src="/video/{{ profile.username }}/{{ video.filename }}"
-                                    preload="metadata"
+                                    preload="auto"
                                     onclick="togglePlay(this)"
                                     data-filename="{{ video.filename }}"
-                                    onloadedmetadata="seekToFirstFrame(this)"
+                                    onloadeddata="handleVideoLoaded(this)"
                                     onerror="handleVideoError(this)"
+                                    oncanplay="this.style.opacity = '1'"
+                                    style="opacity: 0; transition: opacity 0.3s;"
                                 >
                                     Votre navigateur ne supporte pas la lecture vidéo.
                                 </video>
 
+                                <!-- Loading placeholder -->
+                                <div class="loading-placeholder absolute inset-0 flex items-center justify-center bg-gray-800">
+                                    <div class="text-center text-white">
+                                        <div class="mb-2">📹</div>
+                                        <div class="text-sm">Chargement...</div>
+                                    </div>
+                                </div>
+
                                 <!-- Download button overlay -->
-                                <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                                     <a
                                         href="/video/{{ profile.username }}/{{ video.filename }}"
                                         download="{{ video.filename }}"
@@ -324,25 +334,45 @@
             }, 100);
         }
 
-        function seekToFirstFrame(videoElement) {
-            // Force load first frame by seeking to 0.1 seconds
-            videoElement.addEventListener('loadedmetadata', function() {
-                if (this.duration > 0) {
-                    this.currentTime = 0.1;
-                }
-            }, { once: true });
+        function handleVideoLoaded(videoElement) {
+            // Hide loading placeholder when video is ready
+            const placeholder = videoElement.parentElement.querySelector('.loading-placeholder');
+            if (placeholder) {
+                placeholder.style.display = 'none';
+            }
+
+            // Seek to first frame
+            if (videoElement.duration > 0 && videoElement.currentTime === 0) {
+                videoElement.currentTime = 0.1;
+            }
         }
 
         function handleVideoError(videoElement) {
-            // Show error message on video container
-            const container = videoElement.closest('.video-card');
-            if (container) {
-                const errorOverlay = document.createElement('div');
-                errorOverlay.className = 'absolute inset-0 bg-red-900 bg-opacity-50 flex items-center justify-center text-white text-sm p-4 text-center';
-                errorOverlay.innerHTML = '<div>⚠️<br>Erreur de lecture<br><small>Format non supporté</small></div>';
-                videoElement.parentElement.appendChild(errorOverlay);
-            }
             console.error('Video load error:', videoElement.src);
+
+            // Hide loading placeholder
+            const placeholder = videoElement.parentElement.querySelector('.loading-placeholder');
+            if (placeholder) {
+                placeholder.style.display = 'none';
+            }
+
+            // Show error overlay with helpful message
+            const container = videoElement.parentElement;
+            const errorOverlay = document.createElement('div');
+            errorOverlay.className = 'absolute inset-0 bg-gradient-to-b from-orange-900 to-red-900 bg-opacity-90 flex flex-col items-center justify-center text-white text-sm p-6 text-center z-10';
+            errorOverlay.innerHTML = `
+                <div class="text-4xl mb-3">📹</div>
+                <div class="font-semibold mb-2">Format non compatible</div>
+                <div class="text-xs opacity-80 mb-4">Ce format vidéo ne peut pas être lu dans le navigateur</div>
+                <a href="${videoElement.src}" download="${videoElement.dataset.filename}"
+                   class="px-4 py-2 bg-white text-gray-900 rounded-lg hover:bg-gray-100 font-medium shadow-lg">
+                    ⬇️ Télécharger pour voir
+                </a>
+            `;
+            container.appendChild(errorOverlay);
+
+            // Hide video element
+            videoElement.style.display = 'none';
         }
 
         // Initialize on page load
