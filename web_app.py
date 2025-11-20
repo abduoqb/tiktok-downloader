@@ -6,6 +6,7 @@ import os
 import json
 import threading
 from datetime import datetime
+from urllib.parse import unquote
 from main import (
     get_user_dir,
     get_history_file,
@@ -35,19 +36,43 @@ def profile_details(username):
     profile_data = get_profile_data(username)
     return render_template('profile.html', profile=profile_data)
 
-@app.route('/video/<username>/<filename>')
+@app.route('/video/<username>/<path:filename>')
 def serve_video(username, filename):
     """Serve video files for playback"""
+    # Decode URL-encoded characters
+    filename = unquote(filename)
+    username = unquote(username)
+
     # Security: prevent path traversal
-    if '..' in username or '..' in filename:
+    if '..' in username or '..' in filename or '/' in filename or '\\' in filename:
         return jsonify({'error': 'Invalid path'}), 400
 
     user_dir = get_user_dir(username)
 
-    # Check if file exists
+    # Try to find the file (exact match first)
     file_path = os.path.join(user_dir, filename)
+
     if not os.path.exists(file_path):
-        return jsonify({'error': 'Video not found'}), 404
+        # Try to find a similar file (in case of encoding issues)
+        if os.path.exists(user_dir):
+            # Get all mp4 files
+            files = [f for f in os.listdir(user_dir) if f.endswith('.mp4')]
+
+            # Try to match by ID (most reliable)
+            # Extract ID from requested filename (format: *_ID.mp4 or *[ID].mp4)
+            import re
+            id_match = re.search(r'_(\d{19})\.mp4$|[\[\(](\d{19})[\]\)]\.mp4$', filename)
+            if id_match:
+                video_id = id_match.group(1) or id_match.group(2)
+                # Find file with this ID
+                for f in files:
+                    if video_id in f:
+                        file_path = os.path.join(user_dir, f)
+                        filename = f  # Update filename to the actual file
+                        break
+
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'Video not found', 'requested': filename}), 404
 
     return send_from_directory(user_dir, filename)
 
@@ -139,6 +164,54 @@ def delete_profile(username):
         return jsonify({'success': True, 'message': f'Profile {username} deleted'})
 
     return jsonify({'error': 'Profile not found'}), 404
+
+@app.route('/api/video/<username>/<filename>/delete', methods=['DELETE'])
+def delete_video(username, filename):
+    """Delete a single video and remove its ID from history"""
+    from urllib.parse import unquote
+    import re
+
+    # Decode URL-encoded characters
+    filename = unquote(filename)
+    username = unquote(username)
+
+    # Security: prevent path traversal
+    if '..' in username or '..' in filename or '/' in filename or '\\' in filename:
+        return jsonify({'error': 'Invalid path'}), 400
+
+    user_dir = get_user_dir(username)
+    file_path = os.path.join(user_dir, filename)
+
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'Video not found'}), 404
+
+    try:
+        # Extract video ID from filename
+        # Format: YYYYMMDD_username_ID.ext
+        id_match = re.search(r'_(\d{19})\.mp4$', filename)
+        video_id = id_match.group(1) if id_match else None
+
+        # Delete the video file
+        os.remove(file_path)
+
+        # Remove ID from history if found
+        if video_id:
+            history = load_history(username)
+            if video_id in history:
+                history.remove(video_id)
+                # Save updated history
+                history_file = get_history_file(username)
+                with open(history_file, 'w', encoding='utf-8') as f:
+                    json.dump(history, f, indent=4)
+
+        return jsonify({
+            'success': True,
+            'message': f'Video {filename} deleted',
+            'video_id': video_id
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/stats')
 def get_stats():

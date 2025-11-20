@@ -233,6 +233,18 @@ def organize_slideshow(output_dir, video_id):
         
         print(f"Slideshow organized in: {folder_path}")
 
+def sanitize_filename(filename):
+    """Clean filename by removing problematic characters"""
+    import re
+    # Remove or replace problematic characters
+    # Keep only: alphanumeric, dash, underscore, dot, brackets
+    filename = re.sub(r'[^\w\-_\.\[\]\(\)]', '_', filename)
+    # Remove multiple consecutive underscores
+    filename = re.sub(r'_+', '_', filename)
+    # Remove leading/trailing underscores
+    filename = filename.strip('_')
+    return filename
+
 def download_video(video_url, username, video_id, retries=3):
     """Downloads a single video using yt-dlp into the user's directory with retry logic."""
     output_dir = get_user_dir(username)
@@ -240,12 +252,14 @@ def download_video(video_url, username, video_id, retries=3):
         os.makedirs(output_dir)
 
     ydl_opts = {
-        'outtmpl': f'{output_dir}/%(upload_date)s_%(title).50s_[%(id)s].%(ext)s',
+        'outtmpl': f'{output_dir}/%(upload_date)s_%(id)s.%(ext)s',
+        'format': 'bestvideo[vcodec^=avc1]+bestaudio/best[vcodec^=avc1]/best',
         'quiet': False,
         'ignoreerrors': True,
         'restrictfilenames': True,
-        'writeallthumbnails': True,  # Download all slideshow images
-        # Don't specify format - let yt-dlp download best available
+        'writeallthumbnails': True,
+        # Force H.264 (avc1) codec for universal browser compatibility
+        # Falls back to best available if H.264 not available
     }
 
     for attempt in range(retries):
@@ -253,27 +267,33 @@ def download_video(video_url, username, video_id, retries=3):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([video_url])
             
-            # Post-process: Clean up duplicate IDs in filename
+            # Post-process: Rename to include username
             import glob
-            import re
             
-            # Find file with this video ID
-            pattern = f'{output_dir}/*[{video_id}]*'
+            # Find file with this video ID (just downloaded)
+            pattern = f'{output_dir}/*{video_id}*'
             files = glob.glob(pattern)
             
             for file_path in files:
                 if os.path.isfile(file_path):
                     old_name = os.path.basename(file_path)
-                    # Remove patterns like "TikTok_video_7574449625948491030" before the bracketed ID
-                    # Pattern: remove "TikTok_video_XXXXX_" if XXXXX matches the bracketed ID
-                    new_name = re.sub(rf'TikTok_video_{video_id}_(\[{video_id}\])', r'\1', old_name)
-                    # Also remove trailing underscores before brackets
-                    new_name = re.sub(r'_+(\[)', r'\1', new_name)
-                    
-                    if new_name != old_name:
-                        new_path = os.path.join(output_dir, new_name)
-                        os.rename(file_path, new_path)
-                        print(f"Renamed: {old_name} → {new_name}")
+                    # Extract date and extension
+                    # Format: YYYYMMDD_ID.ext -> YYYYMMDD_username_ID.ext
+                    parts = old_name.split('_')
+                    if len(parts) >= 2:
+                        date_part = parts[0]
+                        # Last part has ID.ext
+                        id_and_ext = '_'.join(parts[1:])
+                        new_name = f"{date_part}_{username}_{id_and_ext}"
+                        new_name = sanitize_filename(new_name)
+
+                        if new_name != old_name:
+                            new_path = os.path.join(output_dir, new_name)
+                            try:
+                                os.rename(file_path, new_path)
+                                print(f"Renamed: {old_name} → {new_name}")
+                            except Exception as e:
+                                print(f"Could not rename: {e}")
             
             # Post-process: organize slideshows
             organize_slideshow(output_dir, video_id)

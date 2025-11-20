@@ -1,34 +1,30 @@
 # TikTok Scraper
 
-Un outil CLI Python efficace pour extraire et télécharger des vidéos depuis TikTok et YouTube Shorts.
-
-## Description
-
-Ce script utilise `yt-dlp` pour récupérer les vidéos d'un profil utilisateur de manière optimisée. Il supporte l'extraction rapide de liens (sans téléchargement) et le téléchargement intelligent avec gestion d'historique pour éviter les doublons.
+Un outil CLI Python pour extraire et télécharger des vidéos depuis TikTok et YouTube Shorts avec détection intelligente des slideshows.
 
 ## Fonctionnalités
 
-- **Extraction rapide** : Récupère uniquement les métadonnées sans télécharger (mode `extract_flat`)
-- **Mode incrémental intelligent** : S'arrête automatiquement après 10 vidéos consécutives déjà présentes dans l'historique
-- **Téléchargement avec retry** : 3 tentatives automatiques en cas d'échec réseau
-- **Anti-bannissement** : Délais aléatoires configurables entre chaque téléchargement
-- **Gestion d'historique** : Système JSON pour éviter les doublons
-- **Multi-plateformes** : Supporte TikTok et YouTube Shorts
-- **Organisation automatique** : Structure de dossiers par utilisateur
+✨ **Core**
+- Extraction rapide de liens (mode `extract_flat`)
+- Téléchargement avec retry automatique (3 tentatives)
+- Gestion d'historique JSON pour éviter les doublons
+- Support TikTok et YouTube Shorts
+
+🧠 **Intelligence**
+- **Mode incrémental smart** : S'arrête après 10 vidéos consécutives déjà connues
+- **Détection de slideshows** : Identifie et sauvegarde les panoramas dans un fichier JSON séparé (sans télécharger)
+- **Anti-bannissement** : Délais aléatoires configurables
+
+🎯 **Simplicité**
+- **Mode URL unique** : Téléchargez un TikTok directement via son lien
+- **Format de fichier simple** : `20250120_charolife_7574516139682729238.mp4`
+- Organisation automatique par profil
 
 ## Installation
 
 ### Prérequis
 - Python 3.7+
-- pip
-
-### Installation des dépendances
-
-```bash
-pip install -r requirements.txt
-```
-
-Ou directement :
+- `yt-dlp`
 
 ```bash
 pip install yt-dlp
@@ -36,32 +32,32 @@ pip install yt-dlp
 
 ## Utilisation
 
-### Syntaxe de base
+### Syntaxe
 
 ```bash
-python main.py <username> [options]
+python main.py <username_ou_url> [options]
 ```
 
 ### Arguments
 
 | Argument | Type | Défaut | Description |
 |----------|------|--------|-------------|
-| `username` | Requis | - | Pseudo du créateur de contenu |
-| `--platform` | Optionnel | `tiktok` | Plateforme cible (`tiktok` ou `youtube`) |
-| `--download` | Flag | `False` | Active le téléchargement des vidéos |
-| `--min-sleep` | Optionnel | `5` | Pause minimale entre téléchargements (secondes) |
-| `--max-sleep` | Optionnel | `15` | Pause maximale entre téléchargements (secondes) |
-| `--limit` | Optionnel | - | Limite le nombre de vidéos à traiter |
+| `username_ou_url` | Requis | - | Pseudo du créateur OU URL directe d'un TikTok |
+| `--platform` | Optionnel | `tiktok` | Plateforme (`tiktok` ou `youtube`) |
+| `--download` | Flag | `False` | Active le téléchargement |
+| `--limit` | Optionnel | - | Limite le nombre de vidéos |
+| `--min-sleep` | Optionnel | `5` | Pause min entre téléchargements (s) |
+| `--max-sleep` | Optionnel | `15` | Pause max entre téléchargements (s) |
 
-### Exemples d'utilisation
+### Exemples
 
-#### 1. Extraire uniquement les liens (sans télécharger)
+#### 1. Extraire les liens d'un profil (sans télécharger)
 
 ```bash
-python main.py antiheretique
+python main.py charolife
 ```
 
-Résultat : Fichier `downloads/antiheretique/antiheretique_videos.txt` contenant la liste des URLs.
+Génère : `downloads/charolife/charolife_videos.txt`
 
 #### 2. Télécharger toutes les nouvelles vidéos
 
@@ -69,139 +65,127 @@ Résultat : Fichier `downloads/antiheretique/antiheretique_videos.txt` contenant
 python main.py bellapoarch --download
 ```
 
-#### 3. Limiter à 50 vidéos
+#### 3. Limiter à 20 vidéos
 
 ```bash
-python main.py jujaxtespam --download --limit 50
+python main.py charlidamelio --download --limit 20
 ```
 
-#### 4. YouTube Shorts avec pauses plus longues
+#### 4. Télécharger une vidéo unique via son URL
 
 ```bash
-python main.py channelname --platform youtube --download --min-sleep 10 --max-sleep 20
+python main.py "https://www.tiktok.com/@charolife/video/7574516139682729238"
 ```
 
-#### 5. Mode rapide (pauses courtes - à utiliser avec précaution)
+#### 5. Mode rapide (pour profil de confiance)
 
 ```bash
-python main.py username --download --min-sleep 2 --max-sleep 5
+python main.py addisonre --download --min-sleep 1 --max-sleep 3
 ```
 
-## Structure du projet
+⚠️ **Attention** : Des délais trop courts peuvent causer un bannissement IP !
+
+## Structure des fichiers
 
 ```
-tiktok/
-├── main.py                          # Script principal
-├── requirements.txt                 # Dépendances Python
-├── README.md                        # Ce fichier
-├── explication_projet.md            # Documentation technique détaillée
-├── analysis.md                      # Analyse et recommandations
-└── downloads/                       # Dossier de sortie
-    └── <username>/
-        ├── download_history.json    # Historique des vidéos téléchargées
-        ├── <username>_videos.txt    # Liste des URLs extraites
-        └── *.mp4                    # Vidéos téléchargées
+downloads/
+  └── charolife/
+      ├── charolife_videos.txt          # Liste de tous les liens
+      ├── download_history.json         # IDs des vidéos téléchargées
+      ├── slideshows.json               # TikToks panorama détectés
+      ├── 20250120_charolife_7574516.mp4
+      └── 20250121_charolife_7575823.mp4
 ```
 
-## Format de nommage des vidéos
+## Format de nommage
 
-Les vidéos sont téléchargées avec le format suivant :
+**Vidéos normales** : `{date}_{username}_{id}.mp4`
 
+Exemple : `20250120_charolife_7574516139682729238.mp4`
+
+**Slideshows** : Sauvegardés dans `slideshows.json` (non téléchargés)
+
+```json
+[
+  {
+    "id": "7572951061078625558",
+    "url": "https://www.tiktok.com/@user/video/7572951061078625558"
+  }
+]
 ```
-{date_upload}_{titre_50_caracteres}_{id_video}.mp4
-```
-
-Exemple : `20250120_Best_dance_video_ever_[7574516139682729238].mp4`
 
 ## Fonctionnement interne
 
 ### Mode Incrémental
 
-Le script utilise un système intelligent pour éviter de rescanner tout le profil :
-
 1. Charge l'historique depuis `download_history.json`
-2. Parcourt les vidéos du profil du plus récent au plus ancien
-3. S'arrête après avoir trouvé **10 vidéos consécutives** déjà dans l'historique
-4. Cela suppose que les nouvelles vidéos sont en haut de la liste
+2. Parcourt les vidéos du plus récent au plus ancien
+3. S'arrête après **10 vidéos consécutives** déjà dans l'historique
+4. Permet de combler les "trous" (vidéos manquées lors d'un téléchargement partiel)
 
-### Gestion des erreurs
+### Détection de Slideshows
 
-- **Retry automatique** : 3 tentatives par vidéo en cas d'échec réseau
-- **Pause entre retries** : 2 secondes
-- **Ignorance des erreurs** : Les vidéos inaccessibles sont sautées (ne bloquent pas le processus)
+Avant chaque téléchargement, le script vérifie si c'est un panorama (images + audio uniquement) :
+- ✅ **Vidéo normale** → Téléchargement
+- ⚠️ **Slideshow** → Sauvegarde dans `slideshows.json` + Skip
 
-### Anti-détection
+### Retry & Anti-détection
 
-Pour éviter les bannissements d'IP :
+- **3 tentatives** par vidéo en cas d'échec
+- **Pause de 2s** entre tentatives
+- **Délais aléatoires** entre téléchargements (5-15s par défaut)
 
-- Délais aléatoires entre chaque téléchargement (5-15s par défaut)
-- Utilisation de `yt-dlp` qui gère automatiquement les cookies et signatures
-- Mode `extract_flat` pour l'extraction de liens (très rapide, peu suspect)
+## Exemples de workflows
 
-## Exemples de cas d'usage
-
-### Veille quotidienne
+### Veille quotidienne (plusieurs profils)
 
 ```bash
-# Extraire uniquement les nouveaux liens (très rapide)
-python main.py myuser
-
-# Télécharger les nouvelles vidéos de plusieurs profils
-python main.py user1 --download --limit 20
-python main.py user2 --download --limit 20
-python main.py user3 --download --limit 20
+python main.py charolife --download --limit 10
+python main.py bellapoarch --download --limit 10
+python main.py charlidamelio --download --limit 10
 ```
 
 ### Archivage complet d'un profil
 
 ```bash
-# Première fois : peut prendre plusieurs heures
-python main.py archiveuser --download --min-sleep 10 --max-sleep 20
+# Première fois (peut prendre du temps)
+python main.py khaby.lame --download --min-sleep 10 --max-sleep 20
 
-# Relances suivantes : seulement les nouveaux contenus
-python main.py archiveuser --download
+# Relances suivantes (que les nouveaux)
+python main.py khaby.lame --download
 ```
 
-### Extraction massive de liens pour analyse
+### Téléchargement manuel de vidéos spécifiques
 
 ```bash
-# Récupérer les liens de 10 profils en quelques minutes
-python main.py user1
-python main.py user2
-python main.py user3
-# ... etc
+python main.py "https://www.tiktok.com/@charolife/video/123456"
+python main.py "https://www.tiktok.com/@bellapoarch/video/789012"
 ```
 
 ## Dépannage
 
-### Problème : "No new videos found"
+### "No new videos found"
 
-- Vérifiez que le pseudo est correct
-- Vérifiez que le profil n'est pas privé
-- Essayez de mettre à jour `yt-dlp` : `pip install --upgrade yt-dlp`
+- Vérifiez le pseudo
+- Le profil est peut-être privé
+- Mettez à jour `yt-dlp` : `pip install --upgrade yt-dlp`
 
-### Problème : Téléchargements qui échouent
+### Téléchargements qui échouent
 
 - Augmentez les délais : `--min-sleep 15 --max-sleep 30`
-- Vérifiez votre connexion internet
+- Vérifiez votre connexion
 - Mettez à jour `yt-dlp`
 
-### Problème : Historique corrompu
+### Historique corrompu
 
-Supprimez le fichier `downloads/<username>/download_history.json` pour repartir à zéro.
+Supprimez `downloads/<username>/download_history.json` pour recommencer.
 
 ## Limitations
 
-- **Profils privés** : Ne fonctionne pas avec les comptes privés
-- **Rate limiting** : TikTok peut limiter le nombre de requêtes. Utilisez des délais raisonnables.
-- **Contenu en direct** : Les lives ne sont pas supportés
-
-## Améliorations futures possibles
-
-- Base de données SQLite pour gérer de gros volumes (>10k vidéos)
-- Logs structurés avec le module `logging`
-- Mode batch pour scraper plusieurs utilisateurs d'un coup
-- Interface web (Flask/Streamlit) pour visualiser l'historique
+- ❌ **Profils privés** : Non supportés
+- ⚠️ **Rate limiting** : Respectez des délais raisonnables
+- ❌ **Lives** : Non supportés
+- ⚠️ **Slideshows** : Détectés mais non téléchargés (limitations de yt-dlp)
 
 ## Licence
 
@@ -209,4 +193,4 @@ Projet personnel - Utilisation libre
 
 ## Avertissement
 
-Cet outil est destiné à un usage personnel et éducatif. Respectez les conditions d'utilisation de TikTok et YouTube. Le téléchargement massif de contenu peut violer les CGU des plateformes.
+⚠️ Cet outil est destiné à un **usage personnel et éducatif**. Respectez les CGU de TikTok et YouTube. Le téléchargement massif peut violer leurs conditions d'utilisation.

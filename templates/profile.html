@@ -25,38 +25,38 @@
     </header>
 
     <!-- Main Content -->
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <main class="max-w-7xl mx-auto px-2 sm:px-4 lg:px-8 py-4 sm:py-8">
 
         <!-- Profile Stats -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <div class="text-sm font-medium text-gray-600">Vidéos dans l'historique</div>
-                <div class="text-3xl font-bold text-gray-900 mt-2">{{ profile.video_count }}</div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6">
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
+                <div class="text-xs sm:text-sm font-medium text-gray-600">Vidéos dans l'historique</div>
+                <div class="text-2xl sm:text-3xl font-bold text-gray-900 mt-1 sm:mt-2">{{ profile.video_count }}</div>
             </div>
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <div class="text-sm font-medium text-gray-600">Vidéos téléchargées</div>
-                <div class="text-3xl font-bold text-green-600 mt-2">{{ profile.downloaded_count }}</div>
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
+                <div class="text-xs sm:text-sm font-medium text-gray-600">Vidéos téléchargées</div>
+                <div class="text-2xl sm:text-3xl font-bold text-green-600 mt-1 sm:mt-2">{{ profile.downloaded_count }}</div>
             </div>
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <div class="text-sm font-medium text-gray-600">Espace utilisé</div>
-                <div class="text-3xl font-bold text-blue-600 mt-2">
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
+                <div class="text-xs sm:text-sm font-medium text-gray-600">Espace utilisé</div>
+                <div class="text-2xl sm:text-3xl font-bold text-blue-600 mt-1 sm:mt-2">
                     {{ "%.2f"|format(profile.videos|sum(attribute='size')|default(0) / (1024**3)) }} GB
                 </div>
             </div>
         </div>
 
         <!-- Actions -->
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
-            <div class="flex gap-3">
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-3 sm:p-4 mb-4 sm:mb-6">
+            <div class="flex flex-col sm:flex-row gap-2 sm:gap-3">
                 <button
                     onclick="syncProfile()"
-                    class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                    class="px-4 sm:px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm sm:text-base w-full sm:w-auto"
                 >
                     ⬇️ Synchroniser nouvelles vidéos
                 </button>
                 <button
                     onclick="openFolder()"
-                    class="px-6 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+                    class="px-4 sm:px-6 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 text-sm sm:text-base w-full sm:w-auto"
                 >
                     📁 Ouvrir le dossier
                 </button>
@@ -66,21 +66,21 @@
 
         <!-- Videos List -->
         <div class="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div class="px-6 py-4 border-b border-gray-200">
-                <div class="flex justify-between items-center">
-                    <h2 class="text-lg font-semibold text-gray-900">Vidéos téléchargées ({{ profile.videos|length }})</h2>
+            <div class="px-3 sm:px-6 py-3 sm:py-4 border-b border-gray-200">
+                <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                    <h2 class="text-base sm:text-lg font-semibold text-gray-900">Vidéos téléchargées ({{ profile.videos|length }})</h2>
                     <div class="flex gap-2">
                         <button
                             onclick="viewMode = 'list'; renderVideos()"
                             id="listViewBtn"
-                            class="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded"
+                            class="px-3 py-1 text-xs sm:text-sm bg-gray-100 text-gray-700 rounded flex-1 sm:flex-none"
                         >
                             📋 Liste
                         </button>
                         <button
                             onclick="viewMode = 'grid'; renderVideos()"
                             id="gridViewBtn"
-                            class="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded"
+                            class="px-3 py-1 text-xs sm:text-sm bg-blue-100 text-blue-700 rounded flex-1 sm:flex-none"
                         >
                             🎬 Galerie
                         </button>
@@ -88,45 +88,61 @@
                 </div>
             </div>
 
-            <div id="videosContainer" class="p-6">
+            <div id="videosContainer" class="p-3 sm:p-6">
                 {% if profile.videos %}
-                    <!-- List View (default) -->
-                    <div id="listView" class="space-y-3">
+                    <!-- List View -->
+                    <div id="listView" class="hidden space-y-2 sm:space-y-3">
                         {% for video in profile.videos %}
-                        <div class="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
-                            <div class="flex-1">
-                                <div class="font-medium text-gray-900">{{ video.filename }}</div>
-                                <div class="text-sm text-gray-600 mt-1">
-                                    {{ video.date }} • {{ video.size_mb }} MB
+                        <div class="border border-gray-200 rounded-lg overflow-hidden">
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 sm:p-4 hover:bg-gray-50">
+                                <div class="flex-1 mb-3 sm:mb-0">
+                                    <div class="font-medium text-sm sm:text-base text-gray-900 break-all">{{ video.filename }}</div>
+                                    <div class="text-xs sm:text-sm text-gray-600 mt-1">
+                                        {{ video.date }} • {{ video.size_mb }} MB
+                                    </div>
+                                </div>
+                                <div class="flex flex-col sm:flex-row gap-2 sm:gap-2">
+                                    <button
+                                        onclick="toggleVideoInList(this, '{{ video.filename }}')"
+                                        class="px-3 py-1.5 sm:py-1 text-xs sm:text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 w-full sm:w-auto"
+                                    >
+                                        🎬 Lire
+                                    </button>
+                                    <a
+                                        href="/video/{{ profile.username }}/{{ video.filename }}"
+                                        download="{{ video.filename }}"
+                                        class="px-3 py-1.5 sm:py-1 text-xs sm:text-sm bg-green-100 text-green-700 rounded hover:bg-green-200 text-center w-full sm:w-auto"
+                                    >
+                                        ⬇️ Télécharger
+                                    </a>
+                                    <button
+                                        onclick="deleteVideo('{{ video.filename }}')"
+                                        class="px-3 py-1.5 sm:py-1 text-xs sm:text-sm bg-red-100 text-red-700 rounded hover:bg-red-200 w-full sm:w-auto"
+                                    >
+                                        🗑️ Supprimer
+                                    </button>
                                 </div>
                             </div>
-                            <div class="flex gap-2">
-                                <button
-                                    onclick="playVideoInline('{{ video.filename }}')"
-                                    class="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
-                                >
-                                    🎬 Lire
-                                </button>
-                                <a
-                                    href="/video/{{ profile.username }}/{{ video.filename }}"
-                                    download="{{ video.filename }}"
-                                    class="px-3 py-1 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200"
-                                >
-                                    ⬇️ Télécharger
-                                </a>
-                                <button
-                                    onclick="copyFilePath('{{ video.filename }}')"
-                                    class="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
-                                >
-                                    📋 Copier
-                                </button>
+                            <!-- Video player container (hidden by default) -->
+                            <div class="video-player-container hidden border-t border-gray-200 bg-black p-2 sm:p-4">
+                                <div class="max-w-md mx-auto">
+                                    <video
+                                        class="w-full rounded"
+                                        controls
+                                        preload="metadata"
+                                        src="/video/{{ profile.username }}/{{ video.filename }}"
+                                        style="object-fit: contain; max-height: 80vh;"
+                                    >
+                                        Votre navigateur ne supporte pas la lecture vidéo.
+                                    </video>
+                                </div>
                             </div>
                         </div>
                         {% endfor %}
                     </div>
 
-                    <!-- Gallery View (hidden by default) -->
-                    <div id="galleryView" class="hidden grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    <!-- Gallery View (default) -->
+                    <div id="galleryView" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
                         {% for video in profile.videos %}
                         <div class="video-card relative rounded-lg overflow-hidden border border-gray-200 hover:border-blue-400 transition group">
                             <!-- Video Player -->
@@ -143,12 +159,12 @@
                                 </video>
 
                                 <!-- Download button overlay -->
-                                <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                <div class="absolute top-2 right-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity z-10">
                                     <a
                                         href="/video/{{ profile.username }}/{{ video.filename }}"
                                         download="{{ video.filename }}"
                                         onclick="event.stopPropagation()"
-                                        class="inline-block px-3 py-2 bg-white bg-opacity-90 text-gray-900 text-sm rounded-lg hover:bg-opacity-100 shadow-lg font-medium"
+                                        class="inline-block px-2 sm:px-3 py-1.5 sm:py-2 bg-white bg-opacity-90 text-gray-900 text-xs sm:text-sm rounded-lg hover:bg-opacity-100 shadow-lg font-medium"
                                     >
                                         ⬇️ Télécharger
                                     </a>
@@ -156,8 +172,8 @@
                             </div>
 
                             <!-- Video info -->
-                            <div class="p-3 bg-white">
-                                <h3 class="text-sm font-medium text-gray-900 truncate" title="{{ video.filename }}">
+                            <div class="p-2 sm:p-3 bg-white">
+                                <h3 class="text-xs sm:text-sm font-medium text-gray-900 truncate" title="{{ video.filename }}">
                                     {{ video.filename[:30] }}{% if video.filename|length > 30 %}...{% endif %}
                                 </h3>
                                 <p class="text-xs text-gray-600 mt-1">
@@ -194,7 +210,7 @@
     </main>
 
     <script>
-        let viewMode = 'list';
+        let viewMode = 'grid';
         const videos = {{ profile.videos|tojson }};
 
         async function syncProfile() {
@@ -235,11 +251,27 @@
             alert('Pour ouvrir le dossier:\ndownloads/{{ profile.username }}/');
         }
 
-        function copyFilePath(filename) {
-            const path = `downloads/{{ profile.username }}/${filename}`;
-            navigator.clipboard.writeText(path).then(() => {
-                alert('Chemin copié: ' + path);
-            });
+        async function deleteVideo(filename) {
+            if (!confirm(`Êtes-vous sûr de vouloir supprimer cette vidéo ?\n\n${filename}`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/video/{{ profile.username }}/${encodeURIComponent(filename)}/delete`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(`Vidéo supprimée avec succès${data.video_id ? ' (ID: ' + data.video_id + ')' : ''}`);
+                    location.reload();
+                } else {
+                    alert('Erreur: ' + (data.error || 'Erreur inconnue'));
+                }
+            } catch (error) {
+                alert('Erreur: ' + error.message);
+            }
         }
 
         function renderVideos() {
@@ -256,6 +288,18 @@
 
                 // Pause all videos when switching to list view
                 pauseAllVideos();
+                // Close all inline video players
+                document.querySelectorAll('.video-player-container').forEach(container => {
+                    container.classList.add('hidden');
+                    const v = container.querySelector('video');
+                    if (v) v.pause();
+                });
+                // Reset all buttons
+                document.querySelectorAll('#listView button').forEach(btn => {
+                    if (btn.innerHTML.includes('⏸️')) {
+                        btn.innerHTML = '🎬 Lire';
+                    }
+                });
             } else {
                 listView.classList.add('hidden');
                 galleryView.classList.remove('hidden');
@@ -306,6 +350,36 @@
                     this.controls = false;
                 });
             });
+        }
+
+        function toggleVideoInList(button, filename) {
+            // Find the video player container (sibling of the button's parent)
+            const listItem = button.closest('.border');
+            const playerContainer = listItem.querySelector('.video-player-container');
+            const video = playerContainer.querySelector('video');
+
+            // Close all other open video players
+            document.querySelectorAll('.video-player-container').forEach(container => {
+                if (container !== playerContainer) {
+                    container.classList.add('hidden');
+                    const v = container.querySelector('video');
+                    if (v) v.pause();
+                }
+            });
+
+            // Toggle current player
+            if (playerContainer.classList.contains('hidden')) {
+                playerContainer.classList.remove('hidden');
+                // Auto-play when opened
+                video.play();
+                // Change button text
+                button.innerHTML = '⏸️ Masquer';
+            } else {
+                playerContainer.classList.add('hidden');
+                video.pause();
+                // Reset button text
+                button.innerHTML = '🎬 Lire';
+            }
         }
 
         function playVideoInline(filename) {
