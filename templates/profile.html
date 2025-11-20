@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ profile.username }} - TikTok Scraper</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center gap-4">
+                    <a href="/" class="text-gray-600 hover:text-gray-900">← Retour</a>
+                    <h1 class="text-2xl font-bold text-gray-900">{{ profile.username }}</h1>
+                </div>
+                <div class="flex items-center gap-4">
+                    <button onclick="location.reload()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">
+                        🔄 Actualiser
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        <!-- Profile Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div class="text-sm font-medium text-gray-600">Vidéos dans l'historique</div>
+                <div class="text-3xl font-bold text-gray-900 mt-2">{{ profile.video_count }}</div>
+            </div>
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div class="text-sm font-medium text-gray-600">Vidéos téléchargées</div>
+                <div class="text-3xl font-bold text-green-600 mt-2">{{ profile.downloaded_count }}</div>
+            </div>
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div class="text-sm font-medium text-gray-600">Espace utilisé</div>
+                <div class="text-3xl font-bold text-blue-600 mt-2">
+                    {{ "%.2f"|format(profile.videos|sum(attribute='size')|default(0) / (1024**3)) }} GB
+                </div>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+            <div class="flex gap-3">
+                <button
+                    onclick="syncProfile()"
+                    class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                    ⬇️ Synchroniser nouvelles vidéos
+                </button>
+                <button
+                    onclick="openFolder()"
+                    class="px-6 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+                >
+                    📁 Ouvrir le dossier
+                </button>
+            </div>
+            <div id="syncMessage" class="mt-3 hidden"></div>
+        </div>
+
+        <!-- Videos List -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-lg font-semibold text-gray-900">Vidéos téléchargées ({{ profile.videos|length }})</h2>
+                    <div class="flex gap-2">
+                        <button
+                            onclick="viewMode = 'list'; renderVideos()"
+                            id="listViewBtn"
+                            class="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded"
+                        >
+                            📋 Liste
+                        </button>
+                        <button
+                            onclick="viewMode = 'grid'; renderVideos()"
+                            id="gridViewBtn"
+                            class="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded"
+                        >
+                            🎬 Galerie
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="videosContainer" class="p-6">
+                {% if profile.videos %}
+                    <div class="space-y-3">
+                        {% for video in profile.videos %}
+                        <div class="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
+                            <div class="flex-1">
+                                <div class="font-medium text-gray-900">{{ video.filename }}</div>
+                                <div class="text-sm text-gray-600 mt-1">
+                                    {{ video.date }} • {{ video.size_mb }} MB
+                                </div>
+                            </div>
+                            <div class="flex gap-2">
+                                <button
+                                    onclick="alert('Fonctionnalité à venir: lecteur intégré')"
+                                    class="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                                >
+                                    🎬 Lire
+                                </button>
+                                <button
+                                    onclick="copyFilePath('{{ video.filename }}')"
+                                    class="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                                >
+                                    📋 Copier
+                                </button>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-12 text-gray-500">
+                        Aucune vidéo téléchargée pour ce profil
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Pagination (if needed later) -->
+        {% if profile.videos|length > 50 %}
+        <div class="mt-6 flex justify-center">
+            <div class="flex gap-2">
+                <button class="px-4 py-2 bg-white border border-gray-300 rounded-md hover:bg-gray-50">
+                    ← Précédent
+                </button>
+                <button class="px-4 py-2 bg-blue-600 text-white rounded-md">1</button>
+                <button class="px-4 py-2 bg-white border border-gray-300 rounded-md hover:bg-gray-50">2</button>
+                <button class="px-4 py-2 bg-white border border-gray-300 rounded-md hover:bg-gray-50">3</button>
+                <button class="px-4 py-2 bg-white border border-gray-300 rounded-md hover:bg-gray-50">
+                    Suivant →
+                </button>
+            </div>
+        </div>
+        {% endif %}
+    </main>
+
+    <script>
+        let viewMode = 'list';
+        const videos = {{ profile.videos|tojson }};
+
+        async function syncProfile() {
+            const messageDiv = document.getElementById('syncMessage');
+            messageDiv.className = 'p-4 rounded-md bg-blue-50 text-blue-700';
+            messageDiv.textContent = 'Synchronisation en cours...';
+            messageDiv.classList.remove('hidden');
+
+            try {
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: '{{ profile.username }}',
+                        platform: 'tiktok',
+                        min_sleep: 5,
+                        max_sleep: 15
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    messageDiv.className = 'p-4 rounded-md bg-green-50 text-green-700';
+                    messageDiv.textContent = 'Synchronisation démarrée ! La page se rechargera automatiquement...';
+                    setTimeout(() => location.reload(), 3000);
+                } else {
+                    messageDiv.className = 'p-4 rounded-md bg-red-50 text-red-700';
+                    messageDiv.textContent = 'Erreur: ' + (data.error || 'Erreur inconnue');
+                }
+            } catch (error) {
+                messageDiv.className = 'p-4 rounded-md bg-red-50 text-red-700';
+                messageDiv.textContent = 'Erreur: ' + error.message;
+            }
+        }
+
+        function openFolder() {
+            alert('Pour ouvrir le dossier:\ndownloads/{{ profile.username }}/');
+        }
+
+        function copyFilePath(filename) {
+            const path = `downloads/{{ profile.username }}/${filename}`;
+            navigator.clipboard.writeText(path).then(() => {
+                alert('Chemin copié: ' + path);
+            });
+        }
+
+        function renderVideos() {
+            const container = document.getElementById('videosContainer');
+            const listBtn = document.getElementById('listViewBtn');
+            const gridBtn = document.getElementById('gridViewBtn');
+
+            if (viewMode === 'list') {
+                listBtn.className = 'px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded';
+                gridBtn.className = 'px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded';
+            } else {
+                listBtn.className = 'px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded';
+                gridBtn.className = 'px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded';
+            }
+
+            // Grid view implementation (placeholder)
+            if (viewMode === 'grid') {
+                container.innerHTML = '<div class="text-center py-12 text-gray-500">Vue galerie à venir...</div>';
+            } else {
+                location.reload(); // Reload to show list view
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TikTok Scraper - Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div class="flex justify-between items-center">
+                <h1 class="text-2xl font-bold text-gray-900">🎬 TikTok Scraper</h1>
+                <div class="flex items-center gap-4">
+                    <button onclick="location.reload()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">
+                        🔄 Actualiser
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        <!-- Add Profile Section -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Ajouter un profil</h2>
+
+            <form id="extractForm" class="flex gap-3 items-end">
+                <div class="flex-1">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                    <input
+                        type="text"
+                        id="username"
+                        name="username"
+                        placeholder="@username"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        required
+                    >
+                </div>
+
+                <div class="w-40">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Plateforme</label>
+                    <select
+                        id="platform"
+                        name="platform"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                        <option value="tiktok">TikTok</option>
+                        <option value="youtube">YouTube</option>
+                    </select>
+                </div>
+
+                <div class="w-32">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Limite</label>
+                    <input
+                        type="number"
+                        id="limit"
+                        name="limit"
+                        placeholder="50"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                </div>
+
+                <button
+                    type="submit"
+                    class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                    🔍 Extraire
+                </button>
+
+                <button
+                    type="button"
+                    onclick="downloadVideos()"
+                    class="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+                >
+                    ⬇️ Télécharger
+                </button>
+            </form>
+
+            <div id="message" class="mt-4 hidden"></div>
+        </div>
+
+        <!-- Stats Section -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6" id="statsContainer">
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                <div class="text-sm font-medium text-gray-600">Profils suivis</div>
+                <div class="text-2xl font-bold text-gray-900 mt-1">{{ profiles|length }}</div>
+            </div>
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                <div class="text-sm font-medium text-gray-600">Total vidéos</div>
+                <div class="text-2xl font-bold text-gray-900 mt-1">{{ profiles|sum(attribute='video_count') }}</div>
+            </div>
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                <div class="text-sm font-medium text-gray-600">Espace disque</div>
+                <div class="text-2xl font-bold text-gray-900 mt-1" id="diskSpace">-</div>
+            </div>
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                <div class="text-sm font-medium text-gray-600">Statut</div>
+                <div class="text-2xl font-bold text-green-600 mt-1">🟢 Actif</div>
+            </div>
+        </div>
+
+        <!-- Profiles List -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Profils</h2>
+            </div>
+
+            <div class="divide-y divide-gray-200" id="profilesList">
+                {% if profiles %}
+                    {% for profile in profiles %}
+                    <div class="px-6 py-4 hover:bg-gray-50 transition">
+                        <div class="flex items-center justify-between">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+                                    <h3 class="text-lg font-medium text-gray-900">{{ profile.username }}</h3>
+                                    <span class="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">TikTok</span>
+                                </div>
+                                <div class="mt-1 text-sm text-gray-600">
+                                    📹 {{ profile.video_count }} vidéos
+                                    {% if profile.last_scan %}
+                                    • Dernier scan: {{ profile.last_scan }}
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            <div class="flex items-center gap-2">
+                                <a
+                                    href="/profile/{{ profile.username }}"
+                                    class="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                                >
+                                    📊 Détails
+                                </a>
+                                <button
+                                    onclick="syncProfile('{{ profile.username }}')"
+                                    class="px-4 py-2 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                                >
+                                    ⬇️ Sync
+                                </button>
+                                <button
+                                    onclick="deleteProfile('{{ profile.username }}')"
+                                    class="px-4 py-2 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                >
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="px-6 py-12 text-center text-gray-500">
+                        Aucun profil suivi. Ajoutez-en un pour commencer !
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Activity Log -->
+        <div class="mt-6 bg-white rounded-lg shadow-sm border border-gray-200">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Activité récente</h2>
+            </div>
+            <div class="px-6 py-4 max-h-64 overflow-y-auto" id="activityLog">
+                <div class="text-sm text-gray-500">Aucune activité récente</div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Load stats on page load
+        fetch('/api/stats')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('diskSpace').textContent = data.total_size_gb + ' GB';
+            });
+
+        // Extract form handler
+        document.getElementById('extractForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const username = document.getElementById('username').value.replace('@', '');
+            const platform = document.getElementById('platform').value;
+            const limit = document.getElementById('limit').value || null;
+
+            const messageDiv = document.getElementById('message');
+            messageDiv.className = 'mt-4 p-4 rounded-md bg-blue-50 text-blue-700';
+            messageDiv.textContent = 'Extraction en cours...';
+            messageDiv.classList.remove('hidden');
+
+            try {
+                const response = await fetch('/api/extract', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, platform, limit: limit ? parseInt(limit) : null })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    messageDiv.className = 'mt-4 p-4 rounded-md bg-green-50 text-green-700';
+                    messageDiv.textContent = data.message;
+                    addLog(`✅ ${data.message} pour ${username}`);
+
+                    // Reload page after 2 seconds
+                    setTimeout(() => location.reload(), 2000);
+                } else {
+                    messageDiv.className = 'mt-4 p-4 rounded-md bg-red-50 text-red-700';
+                    messageDiv.textContent = data.error || 'Erreur inconnue';
+                }
+            } catch (error) {
+                messageDiv.className = 'mt-4 p-4 rounded-md bg-red-50 text-red-700';
+                messageDiv.textContent = 'Erreur: ' + error.message;
+            }
+        });
+
+        async function downloadVideos() {
+            const username = document.getElementById('username').value.replace('@', '');
+            const platform = document.getElementById('platform').value;
+            const limit = document.getElementById('limit').value || null;
+
+            if (!username) {
+                alert('Veuillez entrer un username');
+                return;
+            }
+
+            const messageDiv = document.getElementById('message');
+            messageDiv.className = 'mt-4 p-4 rounded-md bg-blue-50 text-blue-700';
+            messageDiv.textContent = 'Téléchargement démarré en arrière-plan...';
+            messageDiv.classList.remove('hidden');
+
+            try {
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username,
+                        platform,
+                        limit: limit ? parseInt(limit) : null,
+                        min_sleep: 5,
+                        max_sleep: 15
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    messageDiv.className = 'mt-4 p-4 rounded-md bg-green-50 text-green-700';
+                    messageDiv.textContent = 'Téléchargement en cours... (vérifiez les logs)';
+                    addLog(`⬇️ Téléchargement démarré pour ${username}`);
+                }
+            } catch (error) {
+                messageDiv.className = 'mt-4 p-4 rounded-md bg-red-50 text-red-700';
+                messageDiv.textContent = 'Erreur: ' + error.message;
+            }
+        }
+
+        async function syncProfile(username) {
+            addLog(`🔄 Synchronisation de ${username}...`);
+
+            try {
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username,
+                        platform: 'tiktok',
+                        min_sleep: 5,
+                        max_sleep: 15
+                    })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    addLog(`✅ Synchronisation démarrée pour ${username}`);
+                }
+            } catch (error) {
+                addLog(`❌ Erreur: ${error.message}`);
+            }
+        }
+
+        async function deleteProfile(username) {
+            if (!confirm(`Êtes-vous sûr de vouloir supprimer ${username} ?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/profile/${username}/delete`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    addLog(`🗑️ ${username} supprimé`);
+                    location.reload();
+                }
+            } catch (error) {
+                alert('Erreur: ' + error.message);
+            }
+        }
+
+        function addLog(message) {
+            const logDiv = document.getElementById('activityLog');
+            const now = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'text-sm text-gray-700 py-1';
+            entry.textContent = `[${now}] ${message}`;
+            logDiv.insertBefore(entry, logDiv.firstChild);
+        }
+    </script>
+</body>
+</html>
