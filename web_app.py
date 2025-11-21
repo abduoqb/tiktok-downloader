@@ -6,6 +6,10 @@ import queue
 import os
 import json
 import threading
+import time
+import requests
+import random
+import traceback
 from datetime import datetime
 from urllib.parse import unquote
 from main import (
@@ -23,8 +27,22 @@ from main import (
 app = Flask(__name__)
 
 # Store background tasks
-# Store background tasks (Legacy support)
 active_tasks = {}
+
+# --- Configuration Telegram ---
+def load_config():
+    config_path = "config.json"
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {}
+
+config = load_config()
+TELEGRAM_BOT_TOKEN = config.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = config.get("TELEGRAM_CHAT_ID")
 
 # --- ARCHITECTURE LOGGING ---
 
@@ -318,6 +336,79 @@ def calculate_total_size():
 
     return total_size
 
+# --- Telegram Helpers ---
+def get_or_create_topic(topic_name):
+    """
+    Vérifie si un topic existe pour ce nom, sinon le crée.
+    Retourne le message_thread_id.
+    """
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return None
+
+    mapping_file = "telegram_topics.json"
+    mapping = {}
+    if os.path.exists(mapping_file):
+        try:
+            with open(mapping_file, "r") as f:
+                mapping = json.load(f)
+        except:
+            pass
+
+    if topic_name in mapping:
+        return mapping[topic_name]
+
+    # Création du topic
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/createForumTopic"
+    data = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "name": topic_name
+    }
+    
+    try:
+        response = requests.post(url, json=data)
+        resp_data = response.json()
+        
+        if resp_data.get("ok"):
+            thread_id = resp_data["result"]["message_thread_id"]
+            # Sauvegarde du mapping
+            mapping[topic_name] = thread_id
+            with open(mapping_file, "w") as f:
+                json.dump(mapping, f)
+            emit_log(f"Topic Telegram créé pour {topic_name} (ID: {thread_id})", "success")
+            return thread_id
+        else:
+            emit_log(f"Erreur création topic Telegram: {resp_data.get('description')}", "error")
+            return None
+    except Exception as e:
+        emit_log(f"Erreur connexion Telegram: {e}", "error")
+        return None
+
+def send_telegram_video(video_path, caption, topic_name):
+    """Envoie une vidéo dans le topic dédié."""
+    thread_id = get_or_create_topic(topic_name)
+    if not thread_id:
+        return
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
+    
+    try:
+        with open(video_path, "rb") as video_file:
+            files = {"video": video_file}
+            data = {
+                "chat_id": TELEGRAM_CHAT_ID,
+                "message_thread_id": thread_id,
+                "caption": caption
+            }
+            response = requests.post(url, data=data, files=files)
+            
+        if response.json().get("ok"):
+            emit_log(f"Vidéo envoyée sur Telegram ({topic_name})", "success")
+        else:
+            emit_log(f"Échec envoi Telegram: {response.json().get('description')}", "error")
+    except Exception as e:
+        emit_log(f"Erreur envoi Telegram: {e}", "error")
+
+
 # --- BACKGROUND TASKS ---
 
 def background_extract_task(username, platform, limit):
@@ -327,7 +418,10 @@ def background_extract_task(username, platform, limit):
         
         # On passe un callback custom à get_video_links si on modifie main.py, 
         # sinon on log juste le début et la fin
-        videos = get_video_links(username, history, platform, limit, callback_log=emit_log)
+        def log_wrapper(msg, level="info"):
+            emit_log(msg, level)
+
+        videos = get_video_links(username, history, platform, limit, callback_log=log_wrapper)
 
         if videos:
             save_links_to_file(username, videos)
@@ -340,9 +434,8 @@ def background_extract_task(username, platform, limit):
 
 def background_download_task(username, platform, min_sleep, max_sleep, force_update=False):
     """Background task to run the download process."""
-    import random
-    import time
-    import traceback
+    global active_tasks
+    active_tasks[username] = "running"
     
     try:
         emit_log(f"Starting background download task for {username}...", "info")
@@ -377,6 +470,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         
         if not videos:
             emit_log("No new videos found to download.", "warning")
+            active_tasks[username] = "done"
             return
 
         emit_log(f"Found {len(videos)} new videos. Saving list...", "success")
@@ -384,14 +478,17 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
 
         # 2. Download Videos
         emit_log(f"Starting download of {len(videos)} videos...", "info")
-        download_count = 0
         
         for i, video in enumerate(videos):
+            if active_tasks.get(username) == "stopping":
+                emit_log(f"Arrêt demandé pour {username}.", "warning")
+                break
+
             video_id = video['id']
             video_url = video['url']
             
-            # Double check history
-            if video_id in history:
+            # Double check history (unless force update, but main.py handles list)
+            if video_id in history and not force_update:
                 continue
             
             emit_log(f"Processing ({i+1}/{len(videos)}): {video_url}", "info")
@@ -403,17 +500,33 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
                 save_to_history(username, video_id)
                 continue
 
-            download_count += 1
+            # Simulation de délai humain
+            sleep_time = random.uniform(min_sleep, max_sleep)
+            time.sleep(sleep_time)
+
             success = download_video(video_url, username, video_id)
             
             if success:
                 emit_log(f"Downloaded: {video_url}", "success")
                 save_to_history(username, video_id)
                 
-                # Sleep
-                sleep_time = random.randint(min_sleep, max_sleep)
-                emit_log(f"Sleeping for {sleep_time}s...", "info")
-                time.sleep(sleep_time)
+                # --- INTEGRATION TELEGRAM ---
+                # On cherche le fichier téléchargé (on suppose que download_video a utilisé le format standard)
+                # Le plus simple est de lister les fichiers récents ou de modifier download_video pour retourner le nom
+                # Ici on va scanner le dossier pour trouver le fichier correspondant à l'ID
+                try:
+                    found_file = None
+                    for f in os.listdir(user_dir):
+                        if video_id in f and f.endswith(".mp4"):
+                            found_file = os.path.join(user_dir, f)
+                            break
+                    
+                    if found_file:
+                        send_telegram_video(found_file, f"Nouveau TikTok de @{username} !\n{video_url}", username)
+                except Exception as e:
+                    emit_log(f"Erreur post-traitement Telegram: {e}", "error")
+                # ----------------------------
+
             else:
                 emit_log(f"Failed to download: {video_url}", "error")
 
@@ -422,6 +535,9 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
     except Exception as e:
         emit_log(f"Task failed: {str(e)}", "error")
         traceback.print_exc()
+    finally:
+        if active_tasks.get(username) != "stopping":
+            active_tasks[username] = "done"
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
