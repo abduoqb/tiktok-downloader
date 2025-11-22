@@ -21,7 +21,7 @@ from main import (
     save_to_history,
     save_links_to_file,
     is_slideshow,
-    save_to_slideshows
+    download_slideshow
 )
 
 app = Flask(__name__)
@@ -94,7 +94,7 @@ def emit_stats_header(username, platform, total_videos, already_downloaded, new_
     emit_log(f"  Déjà téléchargées:              {already_downloaded}", "info", "STATS")
     emit_log(f"  Nouvelles détectées:            {new_videos}", "info", "STATS")
     if slideshows > 0:
-        emit_log(f"  Slideshows (ignorés):           {slideshows}", "info", "STATS")
+        emit_log(f"  Slideshows détectés:            {slideshows}", "info", "STATS")
     emit_log("", "info", "STATS")
 
     emit_log("Configuration:", "info", "STATS")
@@ -638,28 +638,30 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         emit_log("Analyse terminée", "success", "SCAN")
         emit_log("", "info", "SCAN")  # Ligne vide
 
-        # 2. Filter slideshows BEFORE counting
-        videos_to_download = []
+        # 2. Categorize videos and slideshows
+        items_to_download = []
         slideshow_count = 0
+        video_count = 0
 
         for video in videos_raw:
-            if is_slideshow(video['url']):
-                # Slideshow détecté, on le sauvegarde silencieusement et on l'ignore
-                save_to_slideshows(username, video['url'], video['id'])
-                save_to_history(username, video['id'])
+            item_type = 'slideshow' if is_slideshow(video['url']) else 'video'
+            items_to_download.append({
+                'url': video['url'],
+                'id': video['id'],
+                'type': item_type
+            })
+            if item_type == 'slideshow':
                 slideshow_count += 1
             else:
-                videos_to_download.append(video)
+                video_count += 1
 
-        # Si tout est des slideshows
-        if not videos_to_download:
-            if slideshow_count > 0:
-                emit_log(f"{slideshow_count} slideshows détectés et ignorés", "info", "SCAN")
-            emit_log("Aucune vidéo à télécharger", "warning", "SCAN")
+        # Si rien à télécharger
+        if not items_to_download:
+            emit_log("Aucune vidéo ou slideshow à télécharger", "warning", "SCAN")
             active_tasks[username] = "done"
             return
 
-        save_links_to_file(username, videos_to_download)
+        save_links_to_file(username, videos_raw)  # Save all links including slideshows
 
         # 3. Display initial statistics
         total_videos_on_profile = len(history) + len(videos_raw)  # Approximation
@@ -671,7 +673,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
             platform=platform.upper(),
             total_videos=total_videos_on_profile,
             already_downloaded=len(history),
-            new_videos=len(videos_to_download),
+            new_videos=video_count,
             slideshows=slideshow_count,
             mode=mode_text,
             min_sleep=min_sleep,
@@ -682,66 +684,80 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         emit_log(f"Démarrage du téléchargement", "info", "DOWNLOAD")
         emit_log("", "info", "DOWNLOAD")  # Ligne vide
 
-        # 4. Download Videos with progress bar
-        downloaded_count = 0
+        # 4. Download Videos and Slideshows with progress bar
+        downloaded_videos = 0
+        downloaded_slideshows = 0
         telegram_sent_count = 0
         total_size_mb = 0.0
         last_progress_time = time.time()  # Pour afficher la barre toutes les minutes
 
-        for i, video in enumerate(videos_to_download):
+        for i, item in enumerate(items_to_download):
             if active_tasks.get(username) == "stopping":
                 emit_log(f"Arrêt demandé pour @{username}", "warning", "SYSTEM")
                 break
 
-            video_id = video['id']
-            video_url = video['url']
+            item_id = item['id']
+            item_url = item['url']
+            item_type = item['type']
 
             # Double check history
-            if video_id in history and not force_update:
+            if item_id in history and not force_update:
                 continue
 
-            # Pause anti-spam (sauf pour la première vidéo)
+            # Pause anti-spam (sauf pour le premier item)
             if i > 0:
                 sleep_time = random.uniform(min_sleep, max_sleep)
                 emit_log(f"Pause: {int(sleep_time)} secondes", "info", "SYSTEM")
                 time.sleep(sleep_time)
 
-            # Téléchargement
-            video_filename = f"20250{i:02d}_{username}_{video_id}.mp4"  # Simplified, real name will vary
-            emit_log(f"[{i+1}/{len(videos_to_download)}] En cours...", "info", "DOWNLOAD")
-
+            # Téléchargement selon le type
             download_start = time.time()
-            success = download_video(video_url, username, video_id)
+
+            if item_type == 'slideshow':
+                emit_log(f"[{i+1}/{len(items_to_download)}] Slideshow en cours...", "info", "DOWNLOAD")
+                success = download_slideshow(item_url, username, item_id)
+            else:
+                emit_log(f"[{i+1}/{len(items_to_download)}] Vidéo en cours...", "info", "DOWNLOAD")
+                success = download_video(item_url, username, item_id)
+
             download_duration = time.time() - download_start
 
             if success:
-                downloaded_count += 1
-
-                # Trouver le fichier téléchargé pour obtenir sa taille
-                try:
-                    found_file = None
+                if item_type == 'slideshow':
+                    downloaded_slideshows += 1
+                    # Count images in slideshow
+                    image_count = 0
                     for f in os.listdir(user_dir):
-                        if video_id in f and f.endswith(".mp4"):
-                            found_file = os.path.join(user_dir, f)
-                            break
+                        if item_id in f and f.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                            image_count += 1
+                    emit_log(f"[{i+1}/{len(items_to_download)}] Slideshow ({image_count} images) ({download_duration:.1f}s)", "success", "DOWNLOAD")
+                else:
+                    downloaded_videos += 1
+                    # Trouver le fichier téléchargé pour obtenir sa taille
+                    try:
+                        found_file = None
+                        for f in os.listdir(user_dir):
+                            if item_id in f and f.endswith(".mp4"):
+                                found_file = os.path.join(user_dir, f)
+                                break
 
-                    if found_file:
-                        file_size_mb = os.path.getsize(found_file) / (1024 * 1024)
-                        total_size_mb += file_size_mb
-                        emit_log(f"[{i+1}/{len(videos_to_download)}] {os.path.basename(found_file)} ({download_duration:.1f}s)", "success", "DOWNLOAD")
+                        if found_file:
+                            file_size_mb = os.path.getsize(found_file) / (1024 * 1024)
+                            total_size_mb += file_size_mb
+                            emit_log(f"[{i+1}/{len(items_to_download)}] {os.path.basename(found_file)} ({download_duration:.1f}s)", "success", "DOWNLOAD")
 
-                        # Telegram
-                        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-                            send_telegram_video(found_file, f"Nouveau TikTok de @{username} !\n{video_url}", username)
-                            telegram_sent_count += 1
-                            emit_log("Envoyée", "success", "TELEGRAM")
-                    else:
-                        emit_log(f"[{i+1}/{len(videos_to_download)}] Téléchargée ({download_duration:.1f}s)", "success", "DOWNLOAD")
+                            # Telegram
+                            if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                                send_telegram_video(found_file, f"Nouveau TikTok de @{username} !\n{item_url}", username)
+                                telegram_sent_count += 1
+                                emit_log("Envoyée", "success", "TELEGRAM")
+                        else:
+                            emit_log(f"[{i+1}/{len(items_to_download)}] Téléchargée ({download_duration:.1f}s)", "success", "DOWNLOAD")
 
-                except Exception as e:
-                    emit_log(f"Erreur post-traitement: {e}", "error", "SYSTEM")
+                    except Exception as e:
+                        emit_log(f"Erreur post-traitement: {e}", "error", "SYSTEM")
 
-                save_to_history(username, video_id)
+                save_to_history(username, item_id)
 
                 # Afficher la barre de progression toutes les minutes
                 current_time = time.time()
@@ -749,16 +765,19 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
 
                 # Afficher si 60 secondes se sont écoulées depuis le dernier affichage
                 if current_time - last_progress_time >= 60:
-                    emit_progress_bar(downloaded_count, len(videos_to_download), elapsed, total_size_mb, telegram_sent_count)
+                    total_downloaded = downloaded_videos + downloaded_slideshows
+                    emit_progress_bar(total_downloaded, len(items_to_download), elapsed, total_size_mb, telegram_sent_count)
                     last_progress_time = current_time
 
             else:
-                emit_log(f"[{i+1}/{len(videos_to_download)}] Échec du téléchargement", "error", "DOWNLOAD")
+                item_type_label = "slideshow" if item_type == 'slideshow' else "vidéo"
+                emit_log(f"[{i+1}/{len(items_to_download)}] Échec du téléchargement ({item_type_label})", "error", "DOWNLOAD")
 
         # Afficher la barre finale (100%)
         total_time = time.time() - start_time
-        if downloaded_count > 0:
-            emit_progress_bar(downloaded_count, len(videos_to_download), total_time, total_size_mb, telegram_sent_count)
+        total_downloaded = downloaded_videos + downloaded_slideshows
+        if total_downloaded > 0:
+            emit_progress_bar(total_downloaded, len(items_to_download), total_time, total_size_mb, telegram_sent_count)
 
         # Final summary
         minutes = int(total_time // 60)
@@ -772,20 +791,23 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         emit_log("", "info", "SUMMARY")
 
         emit_log("Téléchargement:", "info", "SUMMARY")
-        success_rate = (downloaded_count / len(videos_to_download) * 100) if len(videos_to_download) > 0 else 0
-        emit_log(f"  Succès:                         {downloaded_count}/{len(videos_to_download)} ({success_rate:.0f}%)", "info", "SUMMARY")
-        failed_count = len(videos_to_download) - downloaded_count
+        total_downloaded = downloaded_videos + downloaded_slideshows
+        success_rate = (total_downloaded / len(items_to_download) * 100) if len(items_to_download) > 0 else 0
+        emit_log(f"  Succès:                         {total_downloaded}/{len(items_to_download)} ({success_rate:.0f}%)", "info", "SUMMARY")
+        emit_log(f"    - Vidéos:                     {downloaded_videos}", "info", "SUMMARY")
+        emit_log(f"    - Slideshows:                 {downloaded_slideshows}", "info", "SUMMARY")
+        failed_count = len(items_to_download) - total_downloaded
         emit_log(f"  Échecs:                         {failed_count}", "info", "SUMMARY")
         emit_log(f"  Durée totale:                   {minutes}m {seconds:02d}s", "info", "SUMMARY")
         emit_log(f"  Taille totale:                  {total_size_mb:.1f} MB", "info", "SUMMARY")
-        if downloaded_count > 0:
+        if total_downloaded > 0 and total_time > 0:
             avg_speed = total_size_mb / (total_time / 60)
             emit_log(f"  Vitesse moyenne:                {avg_speed:.1f} MB/min", "info", "SUMMARY")
         emit_log("", "info", "SUMMARY")
 
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
             emit_log("Telegram:", "info", "SUMMARY")
-            emit_log(f"  Envoyées:                       {telegram_sent_count}/{downloaded_count}", "info", "SUMMARY")
+            emit_log(f"  Envoyées:                       {telegram_sent_count}/{downloaded_videos}", "info", "SUMMARY")
             emit_log(f"  Topic:                          {username} (ID: mappé)", "info", "SUMMARY")
             emit_log("", "info", "SUMMARY")
 

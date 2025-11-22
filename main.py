@@ -5,6 +5,10 @@ import sys
 import json
 import time
 import random
+import subprocess
+import glob
+import shutil
+from datetime import datetime
 
 def get_user_dir(username):
     """Returns the directory path for a specific user."""
@@ -89,25 +93,141 @@ def is_slideshow(video_url):
             'no_warnings': True,
             'extract_flat': False,  # Need full info
         }
-        
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
-            
+
             if not info:
                 return False
-            
+
             # Check if there's video format available
             formats = info.get('formats', [])
             has_video = any(f.get('vcodec') != 'none' for f in formats)
             has_audio = any(f.get('acodec') != 'none' for f in formats)
-            
+
             # If only audio available (no video), it's likely a slideshow
             if has_audio and not has_video:
                 return True
-            
+
             return False
     except Exception as e:
         print(f"Error checking slideshow: {e}")
+        return False
+
+def download_slideshow(video_url, username, video_id):
+    """Downloads a slideshow using gallery-dl and organizes files."""
+    try:
+        # Get upload date from TikTok
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+        }
+
+        upload_date = None
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            if info:
+                upload_date = info.get('upload_date', datetime.now().strftime('%Y%m%d'))
+
+        if not upload_date:
+            upload_date = datetime.now().strftime('%Y%m%d')
+
+        # Temporary download directory
+        temp_dir = "temp_slideshow"
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # Configuration gallery-dl
+        config = {
+            "extractor": {
+                "tiktok": {
+                    "directory": [temp_dir, "{author[uniqueId]}", "{id}"],
+                    "filename": "{num:>02}_{id}.{extension}",
+                    "videos": False,  # Only images
+                }
+            }
+        }
+
+        # Create temporary config file
+        config_file = "gallery-dl-config-temp.json"
+        with open(config_file, 'w') as f:
+            json.dump(config, f, indent=2)
+
+        try:
+            # Execute gallery-dl
+            cmd = [
+                'gallery-dl',
+                '--config', config_file,
+                video_url
+            ]
+
+            print(f"📥 Downloading slideshow with gallery-dl: {video_url}")
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                print(f"❌ gallery-dl error: {result.stderr}")
+                return False
+
+            # Find downloaded files in temp directory
+            downloaded_files = glob.glob(f"{temp_dir}/**/*", recursive=True)
+            image_files = [f for f in downloaded_files if os.path.isfile(f) and f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
+            audio_files = [f for f in downloaded_files if os.path.isfile(f) and f.lower().endswith(('.mp3', '.m4a', '.aac'))]
+
+            if not image_files:
+                print("❌ No images found after gallery-dl download")
+                return False
+
+            # Delete audio files (we don't need them)
+            for audio_file in audio_files:
+                try:
+                    os.remove(audio_file)
+                    print(f"🗑️  Removed audio file: {os.path.basename(audio_file)}")
+                except Exception as e:
+                    print(f"Warning: Could not remove audio file: {e}")
+
+            # Move images to final destination with proper naming
+            output_dir = get_user_dir(username)
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Sort images to maintain order
+            image_files.sort()
+
+            moved_count = 0
+            for idx, img_file in enumerate(image_files, start=1):
+                ext = os.path.splitext(img_file)[1]
+                # Format: date_pseudo_id_img=numero.ext
+                new_filename = f"{upload_date}_{username}_{video_id}_img={idx}{ext}"
+                new_path = os.path.join(output_dir, new_filename)
+
+                try:
+                    shutil.move(img_file, new_path)
+                    moved_count += 1
+                    print(f"✅ Moved: {new_filename}")
+                except Exception as e:
+                    print(f"❌ Error moving {img_file}: {e}")
+
+            # Cleanup temp directory
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as e:
+                print(f"Warning: Could not remove temp directory: {e}")
+
+            print(f"✅ Slideshow downloaded: {moved_count} images saved to {output_dir}")
+            return True
+
+        finally:
+            # Clean up config file
+            if os.path.exists(config_file):
+                os.remove(config_file)
+
+    except FileNotFoundError:
+        print("❌ gallery-dl is not installed!")
+        print("Install with: pip install gallery-dl")
+        return False
+    except Exception as e:
+        print(f"❌ Error downloading slideshow: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def get_video_links(username, history, platform="tiktok", limit=None, callback_log=None, force_update=False):
@@ -372,14 +492,18 @@ def main():
         # Check if it's a slideshow
         print("Checking if slideshow...")
         if is_slideshow(args.username_or_url):
-            print("⚠️  Slideshow detected - saving to slideshows.json")
+            print("📸 Slideshow detected - downloading with gallery-dl")
             # Extract video ID from URL
             try:
                 video_id = args.username_or_url.split('/video/')[1].split('?')[0]
             except:
                 video_id = "unknown"
-            save_to_slideshows(username, args.username_or_url, video_id)
-            print("Slideshow saved. Exiting.")
+
+            success = download_slideshow(args.username_or_url, username, video_id)
+            if success:
+                print(f"✅ Slideshow download complete! Saved to {user_dir}")
+            else:
+                print("❌ Slideshow download failed.")
             return
         
         # Download the video
@@ -419,29 +543,39 @@ def main():
         
         if args.download:
             print(f"\nStarting download of {len(videos)} new videos...")
-            
-            download_count = 0  # Actual downloads (excluding slideshows)
-            
+
+            video_count = 0  # Regular video downloads
+            slideshow_count = 0  # Slideshow downloads
+
             for i, video in enumerate(videos):
                 video_id = video['id']
                 video_url = video['url']
-                
+
                 # Double check history just in case (though get_video_links handles it)
                 if video_id in history:
                     continue
-                
+
                 # Detect if it's a slideshow
                 print(f"Checking ({i+1}/{len(videos)}): {video_url}")
                 if is_slideshow(video_url):
-                    print("⚠️  Slideshow detected - saving to slideshows.json and skipping download")
-                    save_to_slideshows(username, video_url, video_id)
-                    save_to_history(username, video_id)  # Mark as processed
+                    slideshow_count += 1
+                    print(f"📸 Slideshow detected - downloading with gallery-dl ({slideshow_count} slideshows so far)")
+                    success = download_slideshow(video_url, username, video_id)
+
+                    if success:
+                        save_to_history(username, video_id)  # Mark as processed
+                        # Sleep to avoid rate limiting
+                        sleep_time = random.randint(args.min_sleep, args.max_sleep)
+                        print(f"Sleeping for {sleep_time} seconds...")
+                        time.sleep(sleep_time)
+                    else:
+                        print("Slideshow download failed, not adding to history.")
                     continue
-                
-                download_count += 1
-                print(f"Downloading ({download_count}): {video_url}")
+
+                video_count += 1
+                print(f"🎥 Downloading video ({video_count}): {video_url}")
                 success = download_video(video_url, username, video_id)
-                
+
                 if success:
                     save_to_history(username, video_id)
                     # Sleep to avoid rate limiting
@@ -450,6 +584,11 @@ def main():
                     time.sleep(sleep_time)
                 else:
                     print("Download failed, not adding to history.")
+
+            print(f"\n📊 Download Summary:")
+            print(f"   Videos: {video_count}")
+            print(f"   Slideshows: {slideshow_count}")
+            print(f"   Total: {video_count + slideshow_count}")
     else:
         print("No new videos found.")
 
