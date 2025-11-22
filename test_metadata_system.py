@@ -104,7 +104,12 @@ def test_performance():
     print(f"\n📊 Résultats:")
     print(f"  Optimized (O(1)): {elapsed_optimized*1000:.2f}ms")
     print(f"  List (O(n)):      {elapsed_list*1000:.2f}ms")
-    print(f"  Amélioration:     {elapsed_list/elapsed_optimized:.1f}x plus rapide")
+
+    if elapsed_optimized > 0:
+        ratio = elapsed_list/elapsed_optimized
+        print(f"  Amélioration:     {ratio:.1f}x plus rapide")
+    else:
+        print(f"  Amélioration:     Extrêmement rapide (< 0.01ms)")
 
     print("✅ Test de performance réussi!")
 
