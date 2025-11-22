@@ -136,9 +136,10 @@ def download_slideshow(video_url, username, video_id):
 
         # Configuration gallery-dl
         config = {
+            "base-directory": temp_dir,
             "extractor": {
                 "tiktok": {
-                    "directory": [temp_dir, "{author[uniqueId]}", "{id}"],
+                    "directory": ["{author[uniqueId]}", "{id}"],
                     "filename": "{num:>02}_{id}.{extension}",
                     "videos": False,  # Only images
                 }
@@ -158,11 +159,13 @@ def download_slideshow(video_url, username, video_id):
                 video_url
             ]
 
-            print(f"📥 Downloading slideshow with gallery-dl: {video_url}")
+            print(f"Downloading slideshow with gallery-dl: {video_url}")
             result = subprocess.run(cmd, capture_output=True, text=True)
 
             if result.returncode != 0:
-                print(f"❌ gallery-dl error: {result.stderr}")
+                print(f"gallery-dl error (returncode {result.returncode})")
+                if result.stderr:
+                    print(f"Error: {result.stderr}")
                 return False
 
             # Find downloaded files in temp directory
@@ -171,14 +174,14 @@ def download_slideshow(video_url, username, video_id):
             audio_files = [f for f in downloaded_files if os.path.isfile(f) and f.lower().endswith(('.mp3', '.m4a', '.aac'))]
 
             if not image_files:
-                print("❌ No images found after gallery-dl download")
+                print("No images found after gallery-dl download")
                 return False
 
             # Delete audio files (we don't need them)
             for audio_file in audio_files:
                 try:
                     os.remove(audio_file)
-                    print(f"🗑️  Removed audio file: {os.path.basename(audio_file)}")
+                    print(f"Removed audio file: {os.path.basename(audio_file)}")
                 except Exception as e:
                     print(f"Warning: Could not remove audio file: {e}")
 
@@ -199,9 +202,9 @@ def download_slideshow(video_url, username, video_id):
                 try:
                     shutil.move(img_file, new_path)
                     moved_count += 1
-                    print(f"✅ Moved: {new_filename}")
+                    print(f"Moved: {new_filename}")
                 except Exception as e:
-                    print(f"❌ Error moving {img_file}: {e}")
+                    print(f"Error moving {img_file}: {e}")
 
             # Cleanup temp directory
             try:
@@ -209,7 +212,7 @@ def download_slideshow(video_url, username, video_id):
             except Exception as e:
                 print(f"Warning: Could not remove temp directory: {e}")
 
-            print(f"✅ Slideshow downloaded: {moved_count} images saved to {output_dir}")
+            print(f"Slideshow downloaded: {moved_count} images saved to {output_dir}")
             return True
 
         finally:
@@ -218,11 +221,11 @@ def download_slideshow(video_url, username, video_id):
                 os.remove(config_file)
 
     except FileNotFoundError:
-        print("❌ gallery-dl is not installed!")
+        print("ERROR: gallery-dl is not installed!")
         print("Install with: pip install gallery-dl")
         return False
     except Exception as e:
-        print(f"❌ Error downloading slideshow: {e}")
+        print(f"Error downloading slideshow: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -489,7 +492,7 @@ def main():
         # Check if it's a slideshow
         print("Checking if slideshow...")
         if is_slideshow(args.username_or_url, username=username):
-            print("📸 Slideshow detected - downloading with gallery-dl")
+            print("Slideshow detected - downloading with gallery-dl")
             # Extract video ID from URL
             try:
                 video_id = args.username_or_url.split('/video/')[1].split('?')[0]
@@ -498,9 +501,9 @@ def main():
 
             success = download_slideshow(args.username_or_url, username, video_id)
             if success:
-                print(f"✅ Slideshow download complete! Saved to {user_dir}")
+                print(f"Slideshow download complete! Saved to {user_dir}")
             else:
-                print("❌ Slideshow download failed.")
+                print("Slideshow download failed.")
             return
         
         # Download the video
@@ -512,9 +515,9 @@ def main():
         
         success = download_video(args.username_or_url, username, video_id)
         if success:
-            print(f"✅ Download complete! Saved to {user_dir}")
+            print(f"Download complete! Saved to {user_dir}")
         else:
-            print("❌ Download failed.")
+            print("Download failed.")
         return
     
     # Username mode (original behavior)
@@ -531,7 +534,7 @@ def main():
 
     print(f"Starting extraction for user: {username} on {args.platform}...")
     if args.force_update:
-        print("⚠️  FORCE UPDATE MODE ENABLED: Will scan all videos.")
+        print("WARNING: FORCE UPDATE MODE ENABLED: Will scan all videos.")
 
     videos = get_video_links(username, history, args.platform, args.limit, force_update=args.force_update)
     
@@ -556,7 +559,7 @@ def main():
                 print(f"Checking ({i+1}/{len(videos)}): {video_url}")
                 if is_slideshow(video_url, username=username):
                     slideshow_count += 1
-                    print(f"📸 Slideshow detected - downloading with gallery-dl ({slideshow_count} slideshows so far)")
+                    print(f"Slideshow detected - downloading with gallery-dl ({slideshow_count} slideshows so far)")
                     success = download_slideshow(video_url, username, video_id)
 
                     if success:
@@ -580,7 +583,7 @@ def main():
                     continue
 
                 video_count += 1
-                print(f"🎥 Downloading video ({video_count}): {video_url}")
+                print(f"Downloading video ({video_count}): {video_url}")
                 success = download_video(video_url, username, video_id)
 
                 if success:
@@ -604,7 +607,7 @@ def main():
                                   file_size=0, success=False)
                     print("Download failed, marked as failed.")
 
-            print(f"\n📊 Download Summary:")
+            print(f"\nDownload Summary:")
             print(f"   Videos: {video_count}")
             print(f"   Slideshows: {slideshow_count}")
             print(f"   Total: {video_count + slideshow_count}")
