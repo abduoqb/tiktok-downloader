@@ -9,7 +9,7 @@ import subprocess
 import glob
 import shutil
 from datetime import datetime
-from metadata_manager import OptimizedMetadataManager, migrate_from_legacy
+from metadata_manager import OptimizedMetadataManager
 
 def get_user_dir(username):
     """Returns the directory path for a specific user."""
@@ -18,45 +18,25 @@ def get_user_dir(username):
 def get_metadata_manager(username):
     """
     Retourne ou crée un OptimizedMetadataManager pour l'utilisateur
-    Effectue la migration automatique si nécessaire
     """
     user_dir = get_user_dir(username)
     os.makedirs(user_dir, exist_ok=True)
 
-    # Vérifier si migration nécessaire
-    metadata_file = os.path.join(user_dir, "metadata.json")
-    if not os.path.exists(metadata_file):
-        # Migration depuis ancien système
-        print(f"Migrating {username} to new metadata system...")
-        manager = migrate_from_legacy(username, user_dir)
-    else:
-        manager = OptimizedMetadataManager(username, user_dir)
-
-    return manager
-
-def get_history_file(username):
-    """Returns the path to the history file for a specific user."""
-    return os.path.join(get_user_dir(username), "download_history.json")
+    return OptimizedMetadataManager(username, user_dir)
 
 def load_history(username):
     """
-    Loads the list of downloaded video IDs (for compatibility)
-    Now uses OptimizedMetadataManager internally
+    Loads the list of downloaded video IDs using OptimizedMetadataManager
     """
     manager = get_metadata_manager(username)
     return manager.get_all_ids()
 
 def save_to_history(username, video_id, url="", item_type="video", file_size=0, file_count=1, success=True):
     """
-    Saves a video ID to history with metadata
-    Enhanced version with metadata support
+    Saves a video ID to history with metadata using OptimizedMetadataManager
     """
     manager = get_metadata_manager(username)
     manager.add(video_id, url, item_type, file_size, file_count, success)
-
-def get_slideshow_file(username):
-    """Returns the path to the slideshow tracking file (deprecated)."""
-    return os.path.join(get_user_dir(username), "slideshows.json")
 
 def is_slideshow(video_url, username=None, use_cache=True):
     """
