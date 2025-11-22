@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Application data (will be mounted as volume)
+downloads/
+config.json
+telegram_topics.json
+
+# Logs
+*.log
+
+# Documentation (not needed in container)
+*.md
+!README.md
+
+# Deployment files
+deploy.sh
+tiktok-scraper.service
+docker-compose.yml
+Dockerfile
+.dockerignore

@@ -85,6 +85,10 @@
                     <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent text-sm font-bold rounded-none text-white bg-cyber-purple hover:bg-purple-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyber-purple transition uppercase tracking-wide font-mono">
                         Lancer l'extraction
                     </button>
+
+                    <button type="button" id="downloadBtn" class="w-full flex justify-center py-3 px-4 border border-transparent text-sm font-bold rounded-none text-white bg-cyber-green hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyber-green transition uppercase tracking-wide font-mono">
+                        Télécharger
+                    </button>
                 </form>
             </div>
         </div>
@@ -212,16 +216,14 @@
 
         function addLog(message, colorClass = 'text-slate-300', time = null) {
             const logDiv = document.getElementById('activityLog');
-            
-            if (!time) {
-                const now = new Date();
-                time = now.toLocaleTimeString();
-            }
 
             const entry = document.createElement('div');
             entry.className = `font-mono text-xs py-0.5 border-b border-slate-800/50 ${colorClass} animate-fade-in break-all`;
-            entry.innerHTML = `<span class="opacity-50 mr-2">[${time}]</span>${message}`;
-            
+
+            // Le message contient déjà le timestamp au format [HH:MM:SS] [NIVEAU] [MODULE]
+            // Donc on n'ajoute plus de timestamp supplémentaire
+            entry.innerHTML = message;
+
             logDiv.appendChild(entry);
             logDiv.scrollTop = logDiv.scrollHeight;
         }
@@ -254,15 +256,58 @@
             }
 
             showNotification('🔍 Initialisation du protocole...', 'info');
-            
+
             try {
                 const response = await fetch('/api/extract', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        username, 
-                        platform, 
+                    body: JSON.stringify({
+                        username,
+                        platform,
                         limit: limit ? parseInt(limit) : null,
+                        force_update: forceUpdate
+                    })
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    showNotification(data.message, 'success');
+                    setTimeout(() => location.reload(), 2000);
+                } else {
+                    showNotification(data.error, 'error');
+                }
+            } catch (error) {
+                showNotification('Erreur connexion serveur', 'error');
+            }
+        });
+
+        // Download Button
+        document.getElementById('downloadBtn').addEventListener('click', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value.replace('@', '');
+            const platform = document.getElementById('platform').value;
+            const limit = document.getElementById('limit').value || null;
+            const minSleep = parseInt(document.getElementById('min_sleep').value);
+            const maxSleep = parseInt(document.getElementById('max_sleep').value);
+            const forceUpdate = document.getElementById('forceUpdate').checked;
+
+            if (!username) {
+                showNotification('Veuillez entrer un pseudo', 'error');
+                return;
+            }
+
+            showNotification('⬇️ Téléchargement démarré...', 'info');
+
+            try {
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username,
+                        platform,
+                        limit: limit ? parseInt(limit) : null,
+                        min_sleep: minSleep,
+                        max_sleep: maxSleep,
                         force_update: forceUpdate
                     })
                 });

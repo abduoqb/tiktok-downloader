@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  tiktok-scraper:
+    build: .
+    container_name: tiktok-scraper
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      # Persister les téléchargements
+      - ./downloads:/app/downloads
+      # Persister la configuration (créez config.json avant de lancer)
+      - ./config.json:/app/config.json:ro
+      - ./telegram_topics.json:/app/telegram_topics.json
+    environment:
+      - FLASK_ENV=production
+      # Optionnel : utiliser des variables d'environnement au lieu de config.json
+      # - TELEGRAM_BOT_TOKEN=your_token_here
+      # - TELEGRAM_CHAT_ID=your_chat_id_here
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optionnel : Nginx comme reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: tiktok-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # Pour SSL (à configurer avec certbot)
+      # - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - tiktok-scraper
