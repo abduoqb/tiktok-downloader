@@ -167,9 +167,14 @@
     <script>
         // --- UI Helpers ---
         function showNotification(text, type) {
+            // Ne rien afficher si pas de texte
+            if (!text || text === 'undefined' || text === 'null') {
+                return;
+            }
+
             const div = document.getElementById('message');
             div.className = 'fixed bottom-5 right-5 max-w-sm w-full p-4 shadow-lg rounded-none animate-fade-in z-50 font-mono text-sm border';
-            
+
             if (type === 'success') {
                 div.classList.add('bg-cyber-card', 'border-cyber-green', 'text-cyber-green');
             } else if (type === 'error') {
@@ -177,10 +182,10 @@
             } else {
                 div.classList.add('bg-cyber-card', 'border-cyber-purple', 'text-cyber-purple');
             }
-            
+
             div.textContent = text;
             div.classList.remove('hidden');
-            
+
             setTimeout(() => {
                 div.classList.add('hidden');
             }, 5000);
@@ -270,11 +275,11 @@
                 });
                 const data = await response.json();
 
-                if (data.success) {
+                if (response.ok && (data.success || data.status === 'started')) {
                     showNotification(data.message, 'success');
                     setTimeout(() => location.reload(), 2000);
                 } else {
-                    showNotification(data.error, 'error');
+                    showNotification(data.error || 'Erreur inconnue', 'error');
                 }
             } catch (error) {
                 showNotification('Erreur connexion serveur', 'error');
@@ -313,11 +318,11 @@
                 });
                 const data = await response.json();
 
-                if (data.success) {
+                if (response.ok && (data.success || data.status === 'started')) {
                     showNotification(data.message, 'success');
                     setTimeout(() => location.reload(), 2000);
                 } else {
-                    showNotification(data.error, 'error');
+                    showNotification(data.error || 'Erreur inconnue', 'error');
                 }
             } catch (error) {
                 showNotification('Erreur connexion serveur', 'error');

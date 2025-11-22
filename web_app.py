@@ -4,14 +4,22 @@ Flask Web Interface for TikTok Scraper
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory, Response, stream_with_context
 import queue
 import os
+import sys
 import json
 import threading
 import time
 import requests
 import random
 import traceback
+import signal
+import atexit
 from datetime import datetime
 from urllib.parse import unquote
+
+# Fix Windows encoding issues
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
 from main import (
     get_user_dir,
     load_history,
@@ -19,6 +27,7 @@ from main import (
     download_video,
     save_to_history,
     save_links_to_file,
+    append_link_to_file,
     is_slideshow,
     download_slideshow,
     get_metadata_manager
@@ -26,8 +35,58 @@ from main import (
 
 app = Flask(__name__)
 
-# Store background tasks
+# Store background tasks with thread references
 active_tasks = {}
+active_threads = {}  # Store thread objects to check if actually running
+
+# Shutdown flag
+shutdown_event = threading.Event()
+
+# --- Shutdown Handler ---
+def cleanup_and_shutdown():
+    """Arrête proprement tous les threads actifs avant de quitter"""
+    global active_tasks, active_threads
+
+    if shutdown_event.is_set():
+        return  # Déjà en cours d'arrêt
+
+    shutdown_event.set()
+    print("\n[SHUTDOWN] Arrêt du serveur Flask...")
+    emit_log("Arrêt du serveur en cours...", "warning", "SYSTEM")
+
+    # Marquer toutes les tâches comme "stopping"
+    for username in list(active_tasks.keys()):
+        active_tasks[username] = "stopping"
+
+    # Attendre que les threads se terminent (max 5 secondes)
+    print(f"[SHUTDOWN] Attente de {len(active_threads)} threads actifs...")
+    start_time = time.time()
+    for username, thread in list(active_threads.items()):
+        if thread.is_alive():
+            remaining_time = max(0, 5 - (time.time() - start_time))
+            thread.join(timeout=remaining_time)
+            if thread.is_alive():
+                print(f"[SHUTDOWN] Thread {username} n'a pas terminé à temps")
+            else:
+                print(f"[SHUTDOWN] Thread {username} terminé")
+
+    # Nettoyer les dictionnaires
+    active_tasks.clear()
+    active_threads.clear()
+
+    print("[SHUTDOWN] Nettoyage terminé")
+    emit_log("Serveur arrêté", "info", "SYSTEM")
+
+def signal_handler(signum, frame):
+    """Gestionnaire de signaux pour arrêt propre"""
+    print(f"\n[SIGNAL] Signal {signum} reçu")
+    cleanup_and_shutdown()
+    os._exit(0)
+
+# Enregistrer les gestionnaires
+atexit.register(cleanup_and_shutdown)
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 # --- Configuration Telegram ---
 def load_config():
@@ -58,30 +117,46 @@ def emit_log(message, level="info", module="SYSTEM"):
     Levels: 'info', 'success' (OK), 'error' (ERROR), 'warning' (WARN)
     Format: [HH:MM:SS] [NIVEAU] [MODULE] Message
     """
-    timestamp = datetime.now().strftime("%H:%M:%S")
+    try:
+        # Nettoyer le message pour éviter les problèmes d'encodage
+        if isinstance(message, str):
+            message = message.encode('utf-8', errors='ignore').decode('utf-8')
 
-    # Mapping des niveaux vers des labels plus sobres
-    level_map = {
-        "info": "INFO",
-        "success": "OK",
-        "error": "ERROR",
-        "warning": "WARN"
-    }
-    level_label = level_map.get(level, "INFO")
+        timestamp = datetime.now().strftime("%H:%M:%S")
 
-    # Format sobre : [HH:MM:SS] [NIVEAU] [MODULE] Message
-    formatted_message = f"[{timestamp}] [{level_label}] [{module}] {message}"
+        # Mapping des niveaux vers des labels plus sobres
+        level_map = {
+            "info": "INFO",
+            "success": "OK",
+            "error": "ERROR",
+            "warning": "WARN"
+        }
+        level_label = level_map.get(level, "INFO")
 
-    data = {
-        "message": formatted_message,
-        "level": level,
-        "time": timestamp
-    }
-    log_queue.put(data)
+        # Format sobre : [HH:MM:SS] [NIVEAU] [MODULE] Message
+        formatted_message = f"[{timestamp}] [{level_label}] [{module}] {message}"
+
+        data = {
+            "message": formatted_message,
+            "level": level,
+            "time": timestamp
+        }
+        log_queue.put(data)
+
+        # Print avec gestion d'erreur d'encodage
+        try:
+            print(f"[{module}] {message}")
+        except UnicodeEncodeError:
+            # Fallback en ASCII si problème d'encodage
+            safe_message = message.encode('ascii', errors='replace').decode('ascii')
+            print(f"[{module}] {safe_message}")
+    except Exception as e:
+        # Si vraiment tout échoue, on ignore silencieusement
+        pass
 
 def emit_stats_header(username, platform, total_videos, already_downloaded, new_videos, slideshows, mode, min_sleep, max_sleep, telegram_enabled):
     """Affiche les statistiques initiales avant le téléchargement"""
-    separator = "═" * 68
+    separator = "=" * 68
 
     emit_log(separator, "info", "STATS")
     emit_log(f"STATISTIQUES DE TÉLÉCHARGEMENT - @{username}", "info", "STATS")
@@ -216,38 +291,82 @@ def serve_video(username, filename):
                         filename = f  # Update filename to the actual file
                         break
 
-    if not os.path.exists(file_path):
-        return jsonify({'error': 'Video not found', 'requested': filename}), 404
-
-    return send_from_directory(user_dir, filename)
+    # Send the file if found
+    if os.path.exists(file_path):
+        return send_from_directory(user_dir, filename)
+    else:
+        return jsonify({'error': 'Video not found'}), 404
 
 @app.route('/api/profiles')
-def get_profiles():
-    """Get list of all profiles (JSON)"""
-    return jsonify(get_all_profiles())
+def get_profiles_api():
+    """API endpoint to get all profiles"""
+    profiles = get_all_profiles()
+    return jsonify(profiles)
 
 @app.route('/api/extract', methods=['POST'])
 def extract_links():
     """Extract video links for a profile (Background Task)"""
+    data = request.json
+    username = data.get('username')
+    platform = data.get('platform', 'tiktok')
+    limit = data.get('limit')
+
+    if not username:
+        return jsonify({'error': 'Username required'}), 400
+
+    # Ensure limit is an integer or None
+    if limit is not None:
+        try:
+            limit = int(limit)
+        except ValueError:
+            limit = None
+
+    emit_log(f"Reçu demande extraction pour {username} avec limite={limit} (type: {type(limit)})", "info", "SYSTEM")
+
+    # Vérifier si un thread est déjà actif
+    if username in active_threads:
+        thread = active_threads[username]
+        if thread.is_alive():
+            return jsonify({'error': 'Extraction already in progress for this user'}), 409
+        else:
+            del active_threads[username]
+            if username in active_tasks:
+                del active_tasks[username]
+
+    thread = threading.Thread(target=background_extract_task, args=(username, platform, limit))
+    thread.daemon = True
+    thread.start()
+
+    # Enregistrer le thread
+    active_threads[username] = thread
+
+    return jsonify({"success": True, "message": f"Scan lancé pour {username}"})
+
+def background_extract_task(username, platform, limit):
     """Background task to extract video links."""
     global active_tasks
     active_tasks[username] = "running"
-    
+
     try:
         emit_log(f"Démarrage de l'extraction pour @{username}...", "info", "SCAN")
-        
+
+        # Vérifier si shutdown demandé
+        if shutdown_event.is_set():
+            emit_log("Arrêt demandé, extraction annulée", "warning", "SCAN")
+            return
+
         # Ensure user directory exists
         user_dir = get_user_dir(username)
         if not os.path.exists(user_dir):
             os.makedirs(user_dir)
-            
+
         # Load history
         history = load_history(username)
-        
+
         # Define a callback for logging from main.py
         def log_callback(msg, level="info"):
             emit_log(msg, level, "SCAN")
-            
+
         # Extract links using generator
         video_generator = get_video_links(
             username,
@@ -256,16 +375,22 @@ def extract_links():
             limit=limit,
             callback_log=log_callback
         )
-        
+
         count = 0
         for video in video_generator:
+            # Vérifier si shutdown demandé
+            if shutdown_event.is_set():
+                emit_log(f"Arrêt demandé, extraction interrompue à {count} vidéos", "warning", "SCAN")
+                break
+
             # Save incrementally
             append_link_to_file(username, video['url'])
             count += 1
             if count % 5 == 0:
                  emit_log(f"{count} vidéos trouvées...", "info", "SCAN")
-                 
-        emit_log(f"Extraction terminée: {count} vidéos trouvées.", "success", "SCAN")
+
+        if not shutdown_event.is_set():
+            emit_log(f"Extraction terminée: {count} vidéos trouvées.", "success", "SCAN")
         
     except Exception as e:
         emit_log(f"Erreur extraction: {str(e)}", "error", "SCAN")
@@ -273,33 +398,90 @@ def extract_links():
     finally:
         if active_tasks.get(username) != "stopping":
             active_tasks[username] = "done"
+        # Clean up thread reference
+        if username in active_threads:
+            del active_threads[username]
 
 @app.route('/api/download', methods=['POST'])
 def start_download():
-    """Start downloading videos in background"""
+    """Start a background download task"""
     data = request.json
     username = data.get('username')
     platform = data.get('platform', 'tiktok')
-    limit = data.get('limit')
-    min_sleep = int(data.get('min_sleep', 5))
-    max_sleep = int(data.get('max_sleep', 15))
+    min_sleep = data.get('min_sleep', 0)
+    max_sleep = data.get('max_sleep', 0)
     force_update = data.get('force_update', False)
 
     if not username:
         return jsonify({'error': 'Username required'}), 400
 
-    thread = threading.Thread(target=background_download_task, args=(username, platform, min_sleep, max_sleep, force_update))
-    thread.daemon = True
+    # Check if thread is actually running (not just status)
+    if username in active_threads:
+        thread = active_threads[username]
+        if thread.is_alive():
+            return jsonify({'error': 'Download already in progress for this user'}), 409
+        else:
+            # Thread finished but status not cleaned up
+            del active_threads[username]
+            if username in active_tasks:
+                del active_tasks[username]
+
+    # Start background task
+    thread = threading.Thread(
+        target=background_download_task,
+        args=(username, platform, min_sleep, max_sleep, force_update),
+        daemon=True
+    )
     thread.start()
 
-    return jsonify({"success": True, "message": f"Téléchargement lancé pour {username}"})
+    # Store thread reference
+    active_threads[username] = thread
+
+    return jsonify({
+        'status': 'started',
+        'task_id': username,
+        'message': f'Download started for @{username}'
+    })
 
 @app.route('/api/task/<task_id>')
 def get_task_status(task_id):
-    """Get status of a background task"""
+    """Get the status of a background task"""
     if task_id in active_tasks:
-        return jsonify(active_tasks[task_id])
+        return jsonify({
+            'task_id': task_id,
+            'status': active_tasks[task_id]
+        })
     return jsonify({'error': 'Task not found'}), 404
+
+@app.route('/api/task/<task_id>/reset', methods=['POST'])
+def reset_task_status(task_id):
+    """Reset a task status (useful if stuck)"""
+    if task_id in active_tasks or task_id in active_threads:
+        old_status = active_tasks.get(task_id, 'unknown')
+        if task_id in active_tasks:
+            del active_tasks[task_id]
+        if task_id in active_threads:
+            del active_threads[task_id]
+        emit_log(f"Réinitialisation de la tâche {task_id} (était: {old_status})", "warning", "SYSTEM")
+        return jsonify({
+            'success': True,
+            'message': f'Task {task_id} reset',
+            'old_status': old_status
+        })
+    return jsonify({'error': 'Task not found'}), 404
+
+@app.route('/api/tasks/clear', methods=['POST'])
+def clear_all_tasks():
+    """Clear all tasks (useful after server restart)"""
+    global active_tasks, active_threads
+    count = len(active_tasks)
+    active_tasks = {}
+    active_threads = {}
+    emit_log(f"Toutes les tâches ont été réinitialisées ({count} tâches)", "warning", "SYSTEM")
+    return jsonify({
+        'success': True,
+        'message': f'{count} tasks cleared'
+    })
 
 @app.route('/api/profile/<username>/delete', methods=['DELETE'])
 def delete_profile(username):
@@ -609,6 +791,11 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
     start_time = time.time()
 
     try:
+        # Vérifier si shutdown demandé
+        if shutdown_event.is_set():
+            emit_log("Arrêt demandé, téléchargement annulé", "warning", "DOWNLOAD")
+            return
+
         emit_log(f"Analyse du profil @{username}...", "info", "SCAN")
 
         # Ensure user directory exists
@@ -636,13 +823,19 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
             callback_log=log_callback,
             force_update=force_update
         )
-        
+
         for video in video_generator:
+            # Vérifier si shutdown demandé
+            if shutdown_event.is_set():
+                emit_log("Arrêt demandé pendant l'extraction", "warning", "SCAN")
+                return
             videos_raw.append(video)
 
         if not videos_raw:
             emit_log("Aucune nouvelle vidéo trouvée", "warning", "SCAN")
             active_tasks[username] = "done"
+            if username in active_threads:
+                del active_threads[username]
             return
 
         emit_log("Analyse terminée", "success", "SCAN")
@@ -670,6 +863,8 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         if not items_to_download:
             emit_log("Aucune vidéo ou slideshow à télécharger", "warning", "SCAN")
             active_tasks[username] = "done"
+            if username in active_threads:
+                del active_threads[username]
             return
 
         save_links_to_file(username, videos_raw)  # Save all links including slideshows
@@ -703,7 +898,8 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         last_progress_time = time.time()  # Pour afficher la barre toutes les minutes
 
         for i, item in enumerate(items_to_download):
-            if active_tasks.get(username) == "stopping":
+            # Vérifier si arrêt demandé (via API ou shutdown serveur)
+            if active_tasks.get(username) == "stopping" or shutdown_event.is_set():
                 emit_log(f"Arrêt demandé pour @{username}", "warning", "SYSTEM")
                 break
 
@@ -805,7 +1001,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         minutes = int(total_time // 60)
         seconds = int(total_time % 60)
 
-        separator = "═" * 68
+        separator = "=" * 68
         emit_log("", "info", "SUMMARY")
         emit_log(separator, "info", "SUMMARY")
         emit_log(f"RÉSUMÉ - @{username}", "info", "SUMMARY")
@@ -854,6 +1050,9 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
     finally:
         if active_tasks.get(username) != "stopping":
             active_tasks[username] = "done"
+        # Clean up thread reference
+        if username in active_threads:
+            del active_threads[username]
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)

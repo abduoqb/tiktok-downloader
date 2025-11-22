@@ -195,13 +195,18 @@
 
         // --- UI Helpers ---
         function showNotification(text, type) {
+            // Ne rien afficher si pas de texte
+            if (!text || text === 'undefined' || text === 'null') {
+                return;
+            }
+
             const div = document.getElementById('syncMessage');
             div.className = 'border border-cyber-border bg-cyber-bg p-4 text-sm font-mono animate-fade-in text-white mb-6';
-            
+
             if (type === 'success') div.classList.add('border-cyber-green', 'text-cyber-green');
             else if (type === 'error') div.classList.add('border-red-500', 'text-red-500');
             else div.classList.add('border-cyber-purple', 'text-cyber-purple');
-            
+
             div.textContent = text;
             div.classList.remove('hidden');
         }
@@ -244,7 +249,7 @@
                     })
                 });
                 const data = await response.json();
-                if (data.success) {
+                if (response.ok && (data.success || data.status === 'started')) {
                     showNotification('Mise à jour démarrée ! Rechargement...', 'success');
                     setTimeout(() => location.reload(), 3000);
                 } else {
