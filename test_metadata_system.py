@@ -1,0 +1,246 @@
+"""
+Test script for the new OptimizedMetadataManager system
+Tests migration, performance, and functionality
+"""
+import os
+import time
+import json
+from metadata_manager import OptimizedMetadataManager, migrate_from_legacy
+
+
+def create_test_legacy_data(username):
+    """Create fake legacy data for testing migration"""
+    user_dir = f"downloads/{username}"
+    os.makedirs(user_dir, exist_ok=True)
+
+    # Create download_history.json
+    history = ["7123456789", "7123456790", "7123456791"]
+    with open(f"{user_dir}/download_history.json", "w") as f:
+        json.dump(history, f)
+
+    # Create slideshows.json
+    slideshows = [
+        {"id": "7123456792", "url": "https://tiktok.com/@test/video/7123456792"},
+        {"id": "7123456793", "url": "https://tiktok.com/@test/video/7123456793"}
+    ]
+    with open(f"{user_dir}/slideshows.json", "w") as f:
+        json.dump(slideshows, f)
+
+    # Create videos.txt
+    with open(f"{user_dir}/{username}_videos.txt", "w") as f:
+        f.write("https://tiktok.com/@test/video/7123456789\n")
+        f.write("https://tiktok.com/@test/video/7123456790\n")
+
+    print(f"✅ Created test legacy data for {username}")
+    return user_dir
+
+
+def test_migration():
+    """Test migration from legacy to new system"""
+    print("\n" + "="*60)
+    print("TEST 1: Migration depuis ancien système")
+    print("="*60)
+
+    username = "test_user_migration"
+    user_dir = create_test_legacy_data(username)
+
+    # Migrate
+    print("\n📦 Migration en cours...")
+    manager = migrate_from_legacy(username, user_dir)
+
+    # Verify
+    print("\n🔍 Vérification des données migrées...")
+    stats = manager.get_stats()
+    print(f"  Videos: {stats.get('video', {}).get('count', 0)}")
+    print(f"  Slideshows: {stats.get('slideshow', {}).get('count', 0)}")
+
+    # Check specific IDs
+    assert manager.is_downloaded("7123456789"), "ID vidéo non trouvé après migration"
+    assert manager.is_downloaded("7123456792"), "ID slideshow non trouvé après migration"
+
+    print("✅ Migration réussie!")
+    return manager
+
+
+def test_performance():
+    """Test performance improvement O(n) vs O(1)"""
+    print("\n" + "="*60)
+    print("TEST 2: Performance O(n) vs O(1)")
+    print("="*60)
+
+    username = "test_user_performance"
+    user_dir = f"downloads/{username}"
+    os.makedirs(user_dir, exist_ok=True)
+
+    manager = OptimizedMetadataManager(username, user_dir)
+
+    # Add 1000 fake entries
+    print("\n📝 Ajout de 1000 entrées...")
+    for i in range(1000):
+        manager.add(f"video_{i}", f"https://test.com/{i}", "video", file_size=1024*1024)
+
+    # Test O(1) lookup
+    print("\n⚡ Test de recherche O(1)...")
+    start = time.time()
+    for i in range(1000):
+        manager.is_downloaded(f"video_{i}")
+    elapsed_optimized = time.time() - start
+
+    # Compare with O(n) list search
+    print("🐌 Test de recherche O(n) (ancien système)...")
+    ids_list = manager.get_all_ids()
+    start = time.time()
+    for i in range(1000):
+        _ = f"video_{i}" in ids_list  # O(n) search
+    elapsed_list = time.time() - start
+
+    print(f"\n📊 Résultats:")
+    print(f"  Optimized (O(1)): {elapsed_optimized*1000:.2f}ms")
+    print(f"  List (O(n)):      {elapsed_list*1000:.2f}ms")
+    print(f"  Amélioration:     {elapsed_list/elapsed_optimized:.1f}x plus rapide")
+
+    print("✅ Test de performance réussi!")
+
+
+def test_slideshow_cache():
+    """Test slideshow caching functionality"""
+    print("\n" + "="*60)
+    print("TEST 3: Cache is_slideshow()")
+    print("="*60)
+
+    username = "test_user_cache"
+    user_dir = f"downloads/{username}"
+    os.makedirs(user_dir, exist_ok=True)
+
+    manager = OptimizedMetadataManager(username, user_dir)
+
+    # Add entry with slideshow type
+    url = "https://tiktok.com/@test/video/123"
+    manager.add("123", url, "slideshow")
+
+    # Test cache
+    cached = manager.get_slideshow_type_from_cache(url)
+    assert cached == True, "Cache slideshow devrait retourner True"
+
+    # Test cache for video
+    video_url = "https://tiktok.com/@test/video/456"
+    manager.add("456", video_url, "video")
+    cached = manager.get_slideshow_type_from_cache(video_url)
+    assert cached == False, "Cache slideshow devrait retourner False pour vidéo"
+
+    print("✅ Cache is_slideshow() fonctionne!")
+
+
+def test_metadata_richness():
+    """Test rich metadata storage"""
+    print("\n" + "="*60)
+    print("TEST 4: Métadonnées riches")
+    print("="*60)
+
+    username = "test_user_metadata"
+    user_dir = f"downloads/{username}"
+    os.makedirs(user_dir, exist_ok=True)
+
+    manager = OptimizedMetadataManager(username, user_dir)
+
+    # Add video with metadata
+    manager.add(
+        video_id="video_123",
+        url="https://test.com/video/123",
+        item_type="video",
+        file_size=5*1024*1024,  # 5MB
+        file_count=1,
+        success=True
+    )
+
+    # Add slideshow with metadata
+    manager.add(
+        video_id="slideshow_456",
+        url="https://test.com/slideshow/456",
+        item_type="slideshow",
+        file_size=0,
+        file_count=12,  # 12 images
+        success=True
+    )
+
+    # Add failed download
+    manager.add(
+        video_id="failed_789",
+        url="https://test.com/video/789",
+        item_type="video",
+        file_size=0,
+        success=False
+    )
+
+    # Check stats
+    stats = manager.get_stats()
+    print(f"\n📊 Statistiques:")
+    print(f"  Videos: {stats.get('video', {}).get('count', 0)}")
+    print(f"  Slideshows: {stats.get('slideshow', {}).get('count', 0)}")
+    print(f"  Taille vidéos: {stats.get('video', {}).get('size', 0)/(1024*1024):.1f}MB")
+
+    # Check failed downloads
+    failed = manager.get_failed_downloads()
+    print(f"\n❌ Téléchargements échoués: {len(failed)}")
+    for item in failed:
+        print(f"  - {item['id']} ({item['type']})")
+
+    print("✅ Métadonnées riches fonctionnent!")
+
+
+def test_backup_safety():
+    """Test backup mechanism"""
+    print("\n" + "="*60)
+    print("TEST 5: Sécurité des backups")
+    print("="*60)
+
+    username = "test_user_backup"
+    user_dir = f"downloads/{username}"
+    os.makedirs(user_dir, exist_ok=True)
+
+    manager = OptimizedMetadataManager(username, user_dir)
+
+    # Add some data
+    manager.add("video_1", "url1", "video")
+    manager.add("video_2", "url2", "video")
+
+    # Check backup exists
+    backup_file = f"{user_dir}/metadata.json.backup"
+    assert os.path.exists(backup_file), "Backup devrait exister"
+
+    print(f"✅ Backup créé: {backup_file}")
+    print("✅ Mécanisme de backup fonctionne!")
+
+
+def run_all_tests():
+    """Run all tests"""
+    print("\n" + "🧪 " + "="*58)
+    print("    SUITE DE TESTS - OptimizedMetadataManager")
+    print("="*60 + "\n")
+
+    try:
+        test_migration()
+        test_performance()
+        test_slideshow_cache()
+        test_metadata_richness()
+        test_backup_safety()
+
+        print("\n" + "="*60)
+        print("✅ TOUS LES TESTS RÉUSSIS!")
+        print("="*60 + "\n")
+
+    except AssertionError as e:
+        print(f"\n❌ TEST ÉCHOUÉ: {e}")
+        return False
+    except Exception as e:
+        print(f"\n❌ ERREUR: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+    return True
+
+
+if __name__ == "__main__":
+    success = run_all_tests()
+    exit(0 if success else 1)

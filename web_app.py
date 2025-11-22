@@ -21,7 +21,8 @@ from main import (
     save_to_history,
     save_links_to_file,
     is_slideshow,
-    download_slideshow
+    download_slideshow,
+    get_metadata_manager
 )
 
 app = Flask(__name__)
@@ -638,13 +639,14 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         emit_log("Analyse terminée", "success", "SCAN")
         emit_log("", "info", "SCAN")  # Ligne vide
 
-        # 2. Categorize videos and slideshows
+        # 2. Categorize videos and slideshows (with caching for performance)
         items_to_download = []
         slideshow_count = 0
         video_count = 0
 
         for video in videos_raw:
-            item_type = 'slideshow' if is_slideshow(video['url']) else 'video'
+            # Use cached is_slideshow for performance
+            item_type = 'slideshow' if is_slideshow(video['url'], username=username) else 'video'
             items_to_download.append({
                 'url': video['url'],
                 'id': video['id'],
@@ -731,9 +733,14 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
                         if item_id in f and f.endswith(('.jpg', '.jpeg', '.png', '.webp')):
                             image_count += 1
                     emit_log(f"[{i+1}/{len(items_to_download)}] Slideshow ({image_count} images) ({download_duration:.1f}s)", "success", "DOWNLOAD")
+
+                    # Save to history with metadata
+                    save_to_history(username, item_id, url=item_url, item_type="slideshow",
+                                  file_size=0, file_count=image_count, success=True)
                 else:
                     downloaded_videos += 1
                     # Trouver le fichier téléchargé pour obtenir sa taille
+                    file_size = 0
                     try:
                         found_file = None
                         for f in os.listdir(user_dir):
@@ -742,7 +749,8 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
                                 break
 
                         if found_file:
-                            file_size_mb = os.path.getsize(found_file) / (1024 * 1024)
+                            file_size = os.path.getsize(found_file)
+                            file_size_mb = file_size / (1024 * 1024)
                             total_size_mb += file_size_mb
                             emit_log(f"[{i+1}/{len(items_to_download)}] {os.path.basename(found_file)} ({download_duration:.1f}s)", "success", "DOWNLOAD")
 
@@ -757,7 +765,9 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
                     except Exception as e:
                         emit_log(f"Erreur post-traitement: {e}", "error", "SYSTEM")
 
-                save_to_history(username, item_id)
+                    # Save to history with metadata
+                    save_to_history(username, item_id, url=item_url, item_type="video",
+                                  file_size=file_size, success=True)
 
                 # Afficher la barre de progression toutes les minutes
                 current_time = time.time()
@@ -770,6 +780,9 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
                     last_progress_time = current_time
 
             else:
+                # Mark as failed in history
+                save_to_history(username, item_id, url=item_url, item_type=item_type,
+                              file_size=0, success=False)
                 item_type_label = "slideshow" if item_type == 'slideshow' else "vidéo"
                 emit_log(f"[{i+1}/{len(items_to_download)}] Échec du téléchargement ({item_type_label})", "error", "DOWNLOAD")
 

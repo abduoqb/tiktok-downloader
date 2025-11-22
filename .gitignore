@@ -41,6 +41,8 @@ Thumbs.db
 # Downloaded videos (keep folder structure but not content)
 downloads/*
 !downloads/.gitkeep
+gallery-dl/*
+!gallery-dl/.gitkeep
 
 # Logs
 *.log

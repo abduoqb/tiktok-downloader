@@ -9,84 +9,76 @@ import subprocess
 import glob
 import shutil
 from datetime import datetime
+from metadata_manager import OptimizedMetadataManager, migrate_from_legacy
 
 def get_user_dir(username):
     """Returns the directory path for a specific user."""
     return os.path.join("downloads", username)
+
+def get_metadata_manager(username):
+    """
+    Retourne ou crée un OptimizedMetadataManager pour l'utilisateur
+    Effectue la migration automatique si nécessaire
+    """
+    user_dir = get_user_dir(username)
+    os.makedirs(user_dir, exist_ok=True)
+
+    # Vérifier si migration nécessaire
+    metadata_file = os.path.join(user_dir, "metadata.json")
+    if not os.path.exists(metadata_file):
+        # Migration depuis ancien système
+        print(f"Migrating {username} to new metadata system...")
+        manager = migrate_from_legacy(username, user_dir)
+    else:
+        manager = OptimizedMetadataManager(username, user_dir)
+
+    return manager
 
 def get_history_file(username):
     """Returns the path to the history file for a specific user."""
     return os.path.join(get_user_dir(username), "download_history.json")
 
 def load_history(username):
-    """Loads the list of downloaded video IDs from the user's JSON file."""
-    history_file = get_history_file(username)
-    if not os.path.exists(history_file):
-        return []
-    try:
-        with open(history_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error loading history: {e}")
-        return []
+    """
+    Loads the list of downloaded video IDs (for compatibility)
+    Now uses OptimizedMetadataManager internally
+    """
+    manager = get_metadata_manager(username)
+    return manager.get_all_ids()
 
-def save_to_history(username, video_id):
-    """Appends a video ID to the user's history file."""
-    history = load_history(username)
-    if video_id not in history:
-        history.append(video_id)
-        try:
-            history_file = get_history_file(username)
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(history_file), exist_ok=True)
-            
-            with open(history_file, "w", encoding="utf-8") as f:
-                json.dump(history, f, indent=4)
-        except Exception as e:
-            print(f"Error saving history: {e}")
+def save_to_history(username, video_id, url="", item_type="video", file_size=0, file_count=1, success=True):
+    """
+    Saves a video ID to history with metadata
+    Enhanced version with metadata support
+    """
+    manager = get_metadata_manager(username)
+    manager.add(video_id, url, item_type, file_size, file_count, success)
 
 def get_slideshow_file(username):
-    """Returns the path to the slideshow tracking file."""
+    """Returns the path to the slideshow tracking file (deprecated)."""
     return os.path.join(get_user_dir(username), "slideshows.json")
 
-def load_slideshows(username):
-    """Loads the list of slideshow URLs."""
-    slideshow_file = get_slideshow_file(username)
-    if not os.path.exists(slideshow_file):
-        return []
-    try:
-        with open(slideshow_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error loading slideshows: {e}")
-        return []
+def is_slideshow(video_url, username=None, use_cache=True):
+    """
+    Detects if a video is a slideshow by checking available formats.
+    Now with caching support for performance.
 
-def save_to_slideshows(username, video_url, video_id):
-    """Saves a slideshow URL to the tracking file."""
-    slideshows = load_slideshows(username)
-    
-    # Check if already in list
-    for item in slideshows:
-        if item.get('id') == video_id:
-            return
-    
-    slideshows.append({
-        'id': video_id,
-        'url': video_url
-    })
-    
-    try:
-        slideshow_file = get_slideshow_file(username)
-        os.makedirs(os.path.dirname(slideshow_file), exist_ok=True)
-        
-        with open(slideshow_file, "w", encoding="utf-8") as f:
-            json.dump(slideshows, f, indent=4)
-        print(f"Slideshow detected and saved to {slideshow_file}")
-    except Exception as e:
-        print(f"Error saving slideshow: {e}")
+    Args:
+        video_url: URL to check
+        username: Optional username for cache lookup
+        use_cache: If True, checks cache before API call
 
-def is_slideshow(video_url):
-    """Detects if a video is a slideshow by checking available formats."""
+    Returns:
+        bool: True if slideshow, False otherwise
+    """
+    # Try cache first if username provided
+    if use_cache and username:
+        manager = get_metadata_manager(username)
+        cached_result = manager.get_slideshow_type_from_cache(video_url)
+        if cached_result is not None:
+            return cached_result
+
+    # API call
     try:
         ydl_opts = {
             'quiet': True,
@@ -98,18 +90,23 @@ def is_slideshow(video_url):
             info = ydl.extract_info(video_url, download=False)
 
             if not info:
-                return False
+                result = False
+            else:
+                # Check if there's video format available
+                formats = info.get('formats', [])
+                has_video = any(f.get('vcodec') != 'none' for f in formats)
+                has_audio = any(f.get('acodec') != 'none' for f in formats)
 
-            # Check if there's video format available
-            formats = info.get('formats', [])
-            has_video = any(f.get('vcodec') != 'none' for f in formats)
-            has_audio = any(f.get('acodec') != 'none' for f in formats)
+                # If only audio available (no video), it's likely a slideshow
+                result = has_audio and not has_video
 
-            # If only audio available (no video), it's likely a slideshow
-            if has_audio and not has_video:
-                return True
+        # Cache the result
+        if use_cache and username:
+            manager = get_metadata_manager(username)
+            manager.cache_slideshow_type(video_url, result)
 
-            return False
+        return result
+
     except Exception as e:
         print(f"Error checking slideshow: {e}")
         return False
@@ -491,7 +488,7 @@ def main():
         
         # Check if it's a slideshow
         print("Checking if slideshow...")
-        if is_slideshow(args.username_or_url):
+        if is_slideshow(args.username_or_url, username=username):
             print("📸 Slideshow detected - downloading with gallery-dl")
             # Extract video ID from URL
             try:
@@ -557,19 +554,29 @@ def main():
 
                 # Detect if it's a slideshow
                 print(f"Checking ({i+1}/{len(videos)}): {video_url}")
-                if is_slideshow(video_url):
+                if is_slideshow(video_url, username=username):
                     slideshow_count += 1
                     print(f"📸 Slideshow detected - downloading with gallery-dl ({slideshow_count} slideshows so far)")
                     success = download_slideshow(video_url, username, video_id)
 
                     if success:
-                        save_to_history(username, video_id)  # Mark as processed
+                        # Count images
+                        image_count = 0
+                        user_dir = get_user_dir(username)
+                        for f in os.listdir(user_dir):
+                            if video_id in f and f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                                image_count += 1
+
+                        save_to_history(username, video_id, url=video_url, item_type="slideshow",
+                                      file_size=0, file_count=image_count, success=True)
                         # Sleep to avoid rate limiting
                         sleep_time = random.randint(args.min_sleep, args.max_sleep)
                         print(f"Sleeping for {sleep_time} seconds...")
                         time.sleep(sleep_time)
                     else:
-                        print("Slideshow download failed, not adding to history.")
+                        save_to_history(username, video_id, url=video_url, item_type="slideshow",
+                                      file_size=0, success=False)
+                        print("Slideshow download failed, marked as failed.")
                     continue
 
                 video_count += 1
@@ -577,13 +584,25 @@ def main():
                 success = download_video(video_url, username, video_id)
 
                 if success:
-                    save_to_history(username, video_id)
+                    # Get file size
+                    file_size = 0
+                    user_dir = get_user_dir(username)
+                    for f in os.listdir(user_dir):
+                        if video_id in f and f.endswith(".mp4"):
+                            file_path = os.path.join(user_dir, f)
+                            file_size = os.path.getsize(file_path)
+                            break
+
+                    save_to_history(username, video_id, url=video_url, item_type="video",
+                                  file_size=file_size, success=True)
                     # Sleep to avoid rate limiting
                     sleep_time = random.randint(args.min_sleep, args.max_sleep)
                     print(f"Sleeping for {sleep_time} seconds...")
                     time.sleep(sleep_time)
                 else:
-                    print("Download failed, not adding to history.")
+                    save_to_history(username, video_id, url=video_url, item_type="video",
+                                  file_size=0, success=False)
+                    print("Download failed, marked as failed.")
 
             print(f"\n📊 Download Summary:")
             print(f"   Videos: {video_count}")
