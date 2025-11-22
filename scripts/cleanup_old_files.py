@@ -7,7 +7,7 @@ import shutil
 
 def cleanup_old_metadata_files():
     """Supprime les anciens fichiers de métadonnées de tous les profils"""
-    downloads_dir = "downloads"
+    downloads_dir = "../downloads"
 
     if not os.path.exists(downloads_dir):
         print("Aucun dossier downloads trouvé")

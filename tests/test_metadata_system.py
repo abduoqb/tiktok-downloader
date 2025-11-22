@@ -7,6 +7,9 @@ import os
 import sys
 import time
 import json
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from metadata_manager import OptimizedMetadataManager, migrate_from_legacy
 
 # Fix encoding for Windows console
@@ -17,7 +20,7 @@ if sys.platform == 'win32':
 
 def create_test_legacy_data(username):
     """Create fake legacy data for testing migration"""
-    user_dir = f"downloads/{username}"
+    user_dir = f"../downloads/{username}"
     os.makedirs(user_dir, exist_ok=True)
 
     # Create download_history.json
@@ -76,7 +79,7 @@ def test_performance():
     print("="*60)
 
     username = "test_user_performance"
-    user_dir = f"downloads/{username}"
+    user_dir = f"../downloads/{username}"
     os.makedirs(user_dir, exist_ok=True)
 
     manager = OptimizedMetadataManager(username, user_dir)
@@ -121,7 +124,7 @@ def test_slideshow_cache():
     print("="*60)
 
     username = "test_user_cache"
-    user_dir = f"downloads/{username}"
+    user_dir = f"../downloads/{username}"
     os.makedirs(user_dir, exist_ok=True)
 
     manager = OptimizedMetadataManager(username, user_dir)
@@ -150,7 +153,7 @@ def test_metadata_richness():
     print("="*60)
 
     username = "test_user_metadata"
-    user_dir = f"downloads/{username}"
+    user_dir = f"../downloads/{username}"
     os.makedirs(user_dir, exist_ok=True)
 
     manager = OptimizedMetadataManager(username, user_dir)
@@ -207,7 +210,7 @@ def test_backup_safety():
     print("="*60)
 
     username = "test_user_backup"
-    user_dir = f"downloads/{username}"
+    user_dir = f"../downloads/{username}"
     os.makedirs(user_dir, exist_ok=True)
 
     manager = OptimizedMetadataManager(username, user_dir)

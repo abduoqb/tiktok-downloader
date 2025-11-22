@@ -43,6 +43,8 @@ downloads/*
 !downloads/.gitkeep
 gallery-dl/*
 !gallery-dl/.gitkeep
+temp_slideshow/*
+!temp_slideshow/.gitkeep
 
 # Logs
 *.log

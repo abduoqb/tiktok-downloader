@@ -229,19 +229,50 @@ def get_profiles():
 @app.route('/api/extract', methods=['POST'])
 def extract_links():
     """Extract video links for a profile (Background Task)"""
-    data = request.json
-    username = data.get('username')
-    platform = data.get('platform', 'tiktok')
-    limit = data.get('limit')
-
-    if not username:
-        return jsonify({'error': 'Username required'}), 400
-
-    thread = threading.Thread(target=background_extract_task, args=(username, platform, limit))
-    thread.daemon = True
-    thread.start()
+    """Background task to extract video links."""
+    global active_tasks
+    active_tasks[username] = "running"
     
-    return jsonify({"success": True, "message": f"Scan lancé pour {username}"})
+    try:
+        emit_log(f"Démarrage de l'extraction pour @{username}...", "info", "SCAN")
+        
+        # Ensure user directory exists
+        user_dir = get_user_dir(username)
+        if not os.path.exists(user_dir):
+            os.makedirs(user_dir)
+            
+        # Load history
+        history = load_history(username)
+        
+        # Define a callback for logging from main.py
+        def log_callback(msg, level="info"):
+            emit_log(msg, level, "SCAN")
+            
+        # Extract links using generator
+        video_generator = get_video_links(
+            username,
+            history,
+            platform,
+            limit=limit,
+            callback_log=log_callback
+        )
+        
+        count = 0
+        for video in video_generator:
+            # Save incrementally
+            append_link_to_file(username, video['url'])
+            count += 1
+            if count % 5 == 0:
+                 emit_log(f"{count} vidéos trouvées...", "info", "SCAN")
+                 
+        emit_log(f"Extraction terminée: {count} vidéos trouvées.", "success", "SCAN")
+        
+    except Exception as e:
+        emit_log(f"Erreur extraction: {str(e)}", "error", "SCAN")
+        traceback.print_exc()
+    finally:
+        if active_tasks.get(username) != "stopping":
+            active_tasks[username] = "done"
 
 @app.route('/api/download', methods=['POST'])
 def start_download():
@@ -565,35 +596,11 @@ def send_telegram_video(video_path, caption, topic_name):
             response = requests.post(url, data=data, files=files)
             
         if response.json().get("ok"):
-            # Le message de succès est géré dans background_download_task
             pass
         else:
             emit_log(f"Échec envoi: {response.json().get('description')}", "error", "TELEGRAM")
     except Exception as e:
         emit_log(f"Erreur envoi: {e}", "error", "TELEGRAM")
-
-
-# --- BACKGROUND TASKS ---
-
-def background_extract_task(username, platform, limit):
-    emit_log(f"Analyse du profil @{username}...", "info", "SCAN")
-    try:
-        history = load_history(username)
-
-        # Callback silencieux pour get_video_links
-        def log_wrapper(msg, level="info"):
-            pass  # On ne veut pas les logs intermédiaires
-
-        videos = get_video_links(username, history, platform, limit, callback_log=log_wrapper)
-
-        if videos:
-            save_links_to_file(username, videos)
-            emit_log(f"Analyse terminée: {len(videos)} nouvelles vidéos détectées", "success", "SCAN")
-        else:
-            emit_log("Analyse terminée: Aucune nouvelle vidéo", "warning", "SCAN")
-
-    except Exception as e:
-        emit_log(f"Erreur lors de l'analyse: {str(e)}", "error", "SCAN")
 
 def background_download_task(username, platform, min_sleep, max_sleep, force_update=False):
     """Background task to run the download process."""
@@ -620,7 +627,8 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
             pass  # On ne veut pas les logs intermédiaires de main.py
 
         # 1. Extract Links
-        videos_raw = get_video_links(
+        videos_raw = []
+        video_generator = get_video_links(
             username,
             history,
             platform,
@@ -628,6 +636,9 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
             callback_log=log_callback,
             force_update=force_update
         )
+        
+        for video in video_generator:
+            videos_raw.append(video)
 
         if not videos_raw:
             emit_log("Aucune nouvelle vidéo trouvée", "warning", "SCAN")

@@ -26,7 +26,7 @@ def check_file_exists(path, description):
 
 def check_metadata_structure(username):
     """Vérifier la structure du fichier metadata.json"""
-    metadata_file = f"downloads/{username}/metadata.json"
+    metadata_file = f"../downloads/{username}/metadata.json"
 
     if not os.path.exists(metadata_file):
         print(f"  ❌ metadata.json n'existe pas pour {username}")
@@ -72,17 +72,17 @@ def check_downloads_folder():
     print("📁 VÉRIFICATION DU DOSSIER DOWNLOADS")
     print("="*60)
 
-    if not os.path.exists("downloads"):
+    if not os.path.exists("../downloads"):
         print("  ❌ Dossier downloads n'existe pas!")
         return False
 
     # Lister les utilisateurs
-    users = [d for d in os.listdir("downloads") if os.path.isdir(f"downloads/{d}")]
+    users = [d for d in os.listdir("../downloads") if os.path.isdir(f"../downloads/{d}")]
 
     if not users:
         print("  ⚠️  Aucun utilisateur trouvé dans downloads/")
         print("  💡 Téléchargez quelques vidéos d'abord avec:")
-        print("     python main.py <username> --download --limit 3")
+        print("     python ../main.py <username> --download --limit 3")
         return False
 
     print(f"  ✅ {len(users)} utilisateur(s) trouvé(s): {', '.join(users[:5])}")
@@ -96,7 +96,7 @@ def check_user_migration(username):
     print(f"🔍 VÉRIFICATION UTILISATEUR: {username}")
     print("="*60)
 
-    user_dir = f"downloads/{username}"
+    user_dir = f"../downloads/{username}"
 
     if not os.path.exists(user_dir):
         print(f"  ❌ Dossier utilisateur n'existe pas: {user_dir}")
@@ -140,8 +140,8 @@ def compare_old_new_counts(username):
     print(f"📊 COMPARAISON ANCIEN/NOUVEAU - {username}")
     print("="*60)
 
-    old_file = f"downloads/{username}/download_history.json"
-    new_file = f"downloads/{username}/metadata.json"
+    old_file = f"../downloads/{username}/download_history.json"
+    new_file = f"../downloads/{username}/metadata.json"
 
     old_count = 0
     new_count = 0
@@ -191,7 +191,7 @@ def main():
         return False
 
     # 2. Trouver un utilisateur à tester
-    users = [d for d in os.listdir("downloads") if os.path.isdir(f"downloads/{d}")]
+    users = [d for d in os.listdir("../downloads") if os.path.isdir(f"../downloads/{d}")]
 
     if not users:
         print("\n❌ Aucun utilisateur à tester!")
@@ -216,20 +216,6 @@ def main():
         all_ok = False
 
     # Résumé final
-    print("\n" + "="*60)
-    if all_ok:
-        print("✅ VÉRIFICATIONS DE BASE RÉUSSIES!")
-        print("="*60)
-        print("\n💡 Prochaines étapes:")
-        print("   1. Testez un téléchargement: python main.py <username> --download --limit 3")
-        print("   2. Testez la web app: python web_app.py")
-        print("   3. Vérifiez le guide complet: GUIDE_TEST.md")
-    else:
-        print("❌ CERTAINES VÉRIFICATIONS ONT ÉCHOUÉ")
-        print("="*60)
-        print("\n⚠️  Vérifiez les erreurs ci-dessus avant de continuer")
-
-    return all_ok
 
 
 if __name__ == "__main__":

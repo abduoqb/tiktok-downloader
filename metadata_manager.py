@@ -78,7 +78,7 @@ class OptimizedMetadataManager:
         """Met en cache le résultat d'un appel is_slideshow()"""
         self._slideshow_cache[video_url] = is_slideshow
 
-    def add(self, video_id, url, item_type, file_size=0, file_count=1, success=True):
+    def add(self, video_id, url, item_type, file_size=0, file_count=1, success=True, tags=None, favorite=False, notes=""):
         """
         Ajoute un téléchargement avec métadonnées
 
@@ -89,6 +89,9 @@ class OptimizedMetadataManager:
             file_size: Taille en octets (0 pour slideshows)
             file_count: Nombre de fichiers (>1 pour slideshows)
             success: True si téléchargement réussi
+            tags: Liste de tags (optionnel)
+            favorite: Marquer comme favori (optionnel)
+            notes: Notes personnelles (optionnel)
         """
         self.load()
 
@@ -98,7 +101,10 @@ class OptimizedMetadataManager:
             "date": datetime.now().isoformat(),
             "size": file_size,
             "file_count": file_count,
-            "success": success
+            "success": success,
+            "tags": tags or [],
+            "favorite": favorite,
+            "notes": notes
         }
 
         # Mise à jour des caches
@@ -186,3 +192,107 @@ class OptimizedMetadataManager:
         """
         self.load()
         return list(self._id_set)
+
+    def add_tag(self, video_id, tag):
+        """Ajoute un tag à une vidéo"""
+        self.load()
+        if video_id in self._metadata:
+            if 'tags' not in self._metadata[video_id]:
+                self._metadata[video_id]['tags'] = []
+            if tag not in self._metadata[video_id]['tags']:
+                self._metadata[video_id]['tags'].append(tag)
+                self._save()
+                return True
+        return False
+
+    def remove_tag(self, video_id, tag):
+        """Supprime un tag d'une vidéo"""
+        self.load()
+        if video_id in self._metadata and 'tags' in self._metadata[video_id]:
+            if tag in self._metadata[video_id]['tags']:
+                self._metadata[video_id]['tags'].remove(tag)
+                self._save()
+                return True
+        return False
+
+    def set_favorite(self, video_id, favorite=True):
+        """Marque/démarque une vidéo comme favorite"""
+        self.load()
+        if video_id in self._metadata:
+            self._metadata[video_id]['favorite'] = favorite
+            self._save()
+            return True
+        return False
+
+    def set_notes(self, video_id, notes):
+        """Ajoute des notes à une vidéo"""
+        self.load()
+        if video_id in self._metadata:
+            self._metadata[video_id]['notes'] = notes
+            self._save()
+            return True
+        return False
+
+    def get_by_tags(self, tags):
+        """
+        Récupère les vidéos par tags
+
+        Args:
+            tags: Liste de tags ou tag unique
+
+        Returns:
+            list: Liste de dictionnaires {id, data}
+        """
+        self.load()
+        if isinstance(tags, str):
+            tags = [tags]
+
+        results = []
+        for vid_id, data in self._metadata.items():
+            video_tags = data.get('tags', [])
+            if any(tag in video_tags for tag in tags):
+                results.append({'id': vid_id, **data})
+
+        return results
+
+    def get_favorites(self):
+        """Récupère toutes les vidéos favorites"""
+        self.load()
+        results = []
+        for vid_id, data in self._metadata.items():
+            if data.get('favorite', False):
+                results.append({'id': vid_id, **data})
+        return results
+
+    def search(self, query):
+        """
+        Recherche dans les métadonnées
+
+        Args:
+            query: Terme de recherche (dans URL, tags, notes)
+
+        Returns:
+            list: Résultats
+        """
+        self.load()
+        query_lower = query.lower()
+        results = []
+
+        for vid_id, data in self._metadata.items():
+            # Recherche dans URL
+            if query_lower in data.get('url', '').lower():
+                results.append({'id': vid_id, **data})
+                continue
+
+            # Recherche dans tags
+            tags = data.get('tags', [])
+            if any(query_lower in tag.lower() for tag in tags):
+                results.append({'id': vid_id, **data})
+                continue
+
+            # Recherche dans notes
+            notes = data.get('notes', '')
+            if query_lower in notes.lower():
+                results.append({'id': vid_id, **data})
+
+        return results

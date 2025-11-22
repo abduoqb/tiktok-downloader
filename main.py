@@ -237,17 +237,19 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
         'ignoreerrors': True,
     }
 
-    videos = []
+
     new_videos_count = 0
     consecutive_matches = 0
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Note: extract_info with download=False and extract_flat=True returns a dict
+            # If it's a playlist/channel, 'entries' is a generator (lazy).
             info = ydl.extract_info(url, download=False)
             
             if not info:
                 log("Failed to extract info (None returned).", "error")
-                return []
+                return
 
             if 'entries' in info:
                 log(f"Found channel/user: {info.get('title', username)}")
@@ -267,7 +269,7 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
                             
                             video_url = entry.get('url') or entry.get('webpage_url')
                             if video_url and video_id:
-                                videos.append({'url': video_url, 'id': video_id})
+                                yield {'url': video_url, 'id': video_id}
                                 new_videos_count += 1
                                 
                                 # LIMIT CHECK
@@ -279,16 +281,15 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
                 video_id = info.get('id')
                 if video_url and video_id:
                     if video_id not in history:
-                        videos.append({'url': video_url, 'id': video_id})
+                        yield {'url': video_url, 'id': video_id}
                     else:
                         log(f"Video {video_id} already in history.", "info")
                     
     except Exception as e:
         log(f"Error extracting links: {e}", "error")
-        return []
+        return
 
-    log(f"Found {len(videos)} new videos.", "success")
-    return videos
+    log(f"Extraction finished. Found {new_videos_count} new videos.", "success")
 
 def organize_slideshow(output_dir, video_id):
     """Post-process downloaded files to organize slideshows into folders."""
@@ -439,6 +440,21 @@ def save_links_to_file(username, videos):
         print(f"Successfully saved {len(all_links)} unique links ({added_count} new) to {os.path.abspath(filename)}")
     except Exception as e:
         print(f"Error saving to file: {e}")
+
+def append_link_to_file(username, video_url):
+    """Appends a single video link to the user's video list file."""
+    output_dir = get_user_dir(username)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        
+    filename = os.path.join(output_dir, f"{username}_videos.txt")
+    try:
+        with open(filename, "a", encoding="utf-8") as f:
+            f.write(video_url + "\n")
+        return True
+    except Exception as e:
+        print(f"Error appending to file: {e}")
+        return False
 
 def main():
     parser = argparse.ArgumentParser(description="Extract and download videos from a user profile or single URL.")

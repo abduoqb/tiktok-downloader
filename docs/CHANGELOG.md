@@ -5,6 +5,15 @@ Tous les changements notables de ce projet seront documentés dans ce fichier.
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [1.3.0] - 2025-11-22
+
+### Modifié
+- **Réorganisation du projet** : Nettoyage de la racine du projet
+  - Déplacement de la documentation dans `docs/`
+  - Déplacement des scripts utilitaires dans `scripts/`
+  - Déplacement des tests dans `tests/`
+  - Mise à jour des chemins dans les scripts et la documentation
+
 ## [1.2.0] - 2025-01-22
 
 ### Ajouté

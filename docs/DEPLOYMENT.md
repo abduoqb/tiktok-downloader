@@ -38,25 +38,6 @@ Guide complet pour déployer le TikTok Scraper sur un serveur VPS (Ubuntu/Debian
 
 ```bash
 ssh root@votre-ip-vps
-```
-
-### 2. Téléchargez et exécutez le script d'installation
-
-```bash
-# Télécharger le script
-wget https://raw.githubusercontent.com/votre-repo/tiktok-scraper/master/deploy.sh
-# OU
-curl -O https://raw.githubusercontent.com/votre-repo/tiktok-scraper/master/deploy.sh
-
-# Rendre exécutable
-chmod +x deploy.sh
-
-# Exécuter
-sudo ./deploy.sh
-```
-
-Le script va :
-- ✅ Installer Python 3.11+, pip, git
 - ✅ Créer un utilisateur dédié `tiktok`
 - ✅ Cloner le projet
 - ✅ Installer les dépendances

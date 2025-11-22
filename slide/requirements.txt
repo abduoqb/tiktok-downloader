@@ -1,3 +1,0 @@
-tiktok-dlpy
-playwright
-requests

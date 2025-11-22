@@ -447,7 +447,7 @@ Pour déployer l'application sur un serveur VPS (Ubuntu/Debian) :
 ssh root@votre-ip
 
 # Télécharger et exécuter le script
-wget https://raw.githubusercontent.com/votre-repo/tiktok-scraper/master/deploy.sh
+wget https://raw.githubusercontent.com/votre-repo/tiktok-scraper/master/scripts/deploy.sh
 chmod +x deploy.sh
 sudo ./deploy.sh
 ```

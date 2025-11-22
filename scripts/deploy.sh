@@ -95,8 +95,8 @@ sudo -u $APP_USER mkdir -p $APP_DIR/downloads
 
 echo ""
 echo -e "${GREEN}[7/8] Configuration du service systemd...${NC}"
-if [ -f "$APP_DIR/tiktok-scraper.service" ]; then
-    cp $APP_DIR/tiktok-scraper.service /etc/systemd/system/
+if [ -f "$APP_DIR/scripts/tiktok-scraper.service" ]; then
+    cp $APP_DIR/scripts/tiktok-scraper.service /etc/systemd/system/
 else
     # Créer le fichier service
     cat > /etc/systemd/system/tiktok-scraper.service <<EOF

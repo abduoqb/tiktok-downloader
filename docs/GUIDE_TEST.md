@@ -10,7 +10,7 @@ Suivez ces étapes dans l'ordre pour valider le nouveau système.
 
 ### 1.1 Tests unitaires
 ```bash
-python test_metadata_system.py
+python tests/test_metadata_system.py
 ```
 
 **Résultat attendu:**
