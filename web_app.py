@@ -14,7 +14,6 @@ from datetime import datetime
 from urllib.parse import unquote
 from main import (
     get_user_dir,
-    get_history_file,
     load_history,
     get_video_links,
     download_video,
@@ -312,15 +311,14 @@ def delete_video(username, filename):
         # Delete the video file
         os.remove(file_path)
 
-        # Remove ID from history if found
+        # Remove ID from metadata if found
         if video_id:
-            history = load_history(username)
-            if video_id in history:
-                history.remove(video_id)
-                # Save updated history
-                history_file = get_history_file(username)
-                with open(history_file, 'w', encoding='utf-8') as f:
-                    json.dump(history, f, indent=4)
+            manager = get_metadata_manager(username)
+            manager.load()
+            if video_id in manager._metadata:
+                del manager._metadata[video_id]
+                manager._id_set.discard(video_id)
+                manager._save()
 
         return jsonify({
             'success': True,
@@ -426,12 +424,12 @@ def get_all_profiles():
             if os.path.isdir(user_dir) and username != '.gitkeep':
                 history = load_history(username)
 
-                # Get last scan time from history file
-                history_file = get_history_file(username)
+                # Get last scan time from metadata file
+                manager = get_metadata_manager(username)
                 last_scan = None
-                if os.path.exists(history_file):
+                if os.path.exists(manager.metadata_file):
                     last_scan = datetime.fromtimestamp(
-                        os.path.getmtime(history_file)
+                        os.path.getmtime(manager.metadata_file)
                     ).strftime('%Y-%m-%d %H:%M:%S')
 
                 profiles.append({
