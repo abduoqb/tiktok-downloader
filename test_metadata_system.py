@@ -1,11 +1,18 @@
+# -*- coding: utf-8 -*-
 """
 Test script for the new OptimizedMetadataManager system
 Tests migration, performance, and functionality
 """
 import os
+import sys
 import time
 import json
 from metadata_manager import OptimizedMetadataManager, migrate_from_legacy
+
+# Fix encoding for Windows console
+if sys.platform == 'win32':
+    import codecs
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
 
 
 def create_test_legacy_data(username):
@@ -214,7 +221,7 @@ def test_backup_safety():
 
 def run_all_tests():
     """Run all tests"""
-    print("\n" + "🧪 " + "="*58)
+    print("\n" + "="*60)
     print("    SUITE DE TESTS - OptimizedMetadataManager")
     print("="*60 + "\n")
 
