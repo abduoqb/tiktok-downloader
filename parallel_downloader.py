@@ -102,13 +102,17 @@ class ParallelDownloader:
             tuple: (success: bool, file_info: dict)
         """
         import os
-        from main import get_user_dir
+        from main import get_user_dir, find_downloaded_videos
 
         video_id = item['id']
         video_url = item['url']
         item_type = item['type']
 
         start_time = time.time()
+
+        # Type inconnu (is_slideshow() a renvoyé None) : erreur, ne pas traiter comme une vidéo normale
+        if item_type not in ('slideshow', 'video'):
+            return False, {'type': 'unknown', 'error': 'Type inconnu (slideshow/vidéo), réessayer plus tard'}
 
         try:
             if item_type == 'slideshow':
@@ -133,18 +137,14 @@ class ParallelDownloader:
             else:  # video
                 success = download_video(video_url, username, video_id)
 
-                if success:
-                    # Trouver le fichier et obtenir sa taille
-                    user_dir = get_user_dir(username)
-                    file_size = 0
-                    filename = None
+                # Fichier vérifié obligatoire pour signaler un succès
+                video_files = find_downloaded_videos(username, video_id) if success else []
 
-                    for f in os.listdir(user_dir):
-                        if video_id in f and f.endswith('.mp4'):
-                            filename = f
-                            file_path = os.path.join(user_dir, f)
-                            file_size = os.path.getsize(file_path)
-                            break
+                if success and video_files:
+                    # Trouver le fichier et obtenir sa taille
+                    file_path = video_files[0]
+                    filename = os.path.basename(file_path)
+                    file_size = os.path.getsize(file_path)
 
                     return True, {
                         'type': 'video',

@@ -8,7 +8,7 @@ import sys
 import json
 import threading
 import time
-import requests
+
 import random
 import traceback
 import signal
@@ -30,7 +30,8 @@ from main import (
     append_link_to_file,
     is_slideshow,
     download_slideshow,
-    get_metadata_manager
+    get_metadata_manager,
+    find_downloaded_videos
 )
 
 app = Flask(__name__)
@@ -88,23 +89,7 @@ atexit.register(cleanup_and_shutdown)
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-# --- Configuration Telegram ---
-def load_config():
-    config_path = "config.json"
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r") as f:
-                return json.load(f)
-        except:
-            pass
-    return {}
 
-config = load_config()
-TELEGRAM_BOT_TOKEN = config.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = config.get("TELEGRAM_CHAT_ID")
-
-# Verrou pour protéger l'accès au fichier telegram_topics.json
-telegram_topics_lock = threading.Lock()
 
 # --- ARCHITECTURE LOGGING ---
 
@@ -154,7 +139,7 @@ def emit_log(message, level="info", module="SYSTEM"):
         # Si vraiment tout échoue, on ignore silencieusement
         pass
 
-def emit_stats_header(username, platform, total_videos, already_downloaded, new_videos, slideshows, mode, min_sleep, max_sleep, telegram_enabled):
+def emit_stats_header(username, platform, total_videos, already_downloaded, new_videos, slideshows, mode, min_sleep, max_sleep):
     """Affiche les statistiques initiales avant le téléchargement"""
     separator = "=" * 68
 
@@ -176,7 +161,6 @@ def emit_stats_header(username, platform, total_videos, already_downloaded, new_
     emit_log(f"  Mode:                           {mode}", "info", "STATS")
     emit_log(f"  Délais entre vidéos:            {min_sleep}-{max_sleep} secondes", "info", "STATS")
     emit_log(f"  Tentatives par vidéo:           3", "info", "STATS")
-    emit_log(f"  Telegram:                       {'Activé (topic: ' + username + ')' if telegram_enabled else 'Désactivé'}", "info", "STATS")
     emit_log("", "info", "STATS")
 
     # Estimation du temps (environ 3-5s par vidéo + délais)
@@ -191,7 +175,7 @@ def emit_stats_header(username, platform, total_videos, already_downloaded, new_
     emit_log("", "info", "STATS")
     emit_log(separator, "info", "STATS")
 
-def emit_progress_bar(current, total, elapsed_seconds, total_size_mb, telegram_sent):
+def emit_progress_bar(current, total, elapsed_seconds, total_size_mb):
     """
     Affiche une barre de progression simple sur une ligne.
     Format: [##··] 17/170 (10%) | 4m23s | ~39m34s | 17.0 MB | 17 envoyées
@@ -216,9 +200,9 @@ def emit_progress_bar(current, total, elapsed_seconds, total_size_mb, telegram_s
 
     # Ligne unique simple
     if current == total:
-        progress_line = f"[{bar}] {current}/{total} ({percentage}%) | {elapsed_time} | Terminé | {total_size_mb:.1f} MB | {telegram_sent} envoyées"
+        progress_line = f"[{bar}] {current}/{total} ({percentage}%) | {elapsed_time} | Terminé | {total_size_mb:.1f} MB"
     else:
-        progress_line = f"[{bar}] {current}/{total} ({percentage}%) | {elapsed_time} | {remaining_time} | {total_size_mb:.1f} MB | {telegram_sent} envoyées"
+        progress_line = f"[{bar}] {current}/{total} ({percentage}%) | {elapsed_time} | {remaining_time} | {total_size_mb:.1f} MB"
 
     emit_log(progress_line, "info", "PROGRESS")
 
@@ -368,12 +352,18 @@ def background_extract_task(username, platform, limit):
             emit_log(msg, level, "SCAN")
 
         # Extract links using generator
+        # Cookies file for TikTok authentication
+        cookies_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tiktok.com_cookies.txt')
+        if not os.path.exists(cookies_file):
+            cookies_file = None
+
         video_generator = get_video_links(
             username,
             history,
             platform,
             limit=limit,
-            callback_log=log_callback
+            callback_log=log_callback,
+            cookies_file=cookies_file
         )
 
         count = 0
@@ -542,73 +532,7 @@ def delete_video(username, filename):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/telegram/topics', methods=['GET'])
-def get_telegram_topics():
-    """Get the current Telegram topics mapping"""
-    mapping_file = "telegram_topics.json"
-    mapping = {}
-    if os.path.exists(mapping_file):
-        try:
-            with open(mapping_file, "r") as f:
-                mapping = json.load(f)
-        except:
-            pass
-    return jsonify(mapping)
 
-@app.route('/api/telegram/topics', methods=['POST'])
-def add_telegram_topic():
-    """Manually add a Telegram topic mapping"""
-    data = request.json
-    topic_name = data.get('topic_name')
-    thread_id = data.get('thread_id')
-
-    if not topic_name or not thread_id:
-        return jsonify({'error': 'topic_name and thread_id required'}), 400
-
-    mapping_file = "telegram_topics.json"
-
-    with telegram_topics_lock:
-        mapping = {}
-        if os.path.exists(mapping_file):
-            try:
-                with open(mapping_file, "r") as f:
-                    mapping = json.load(f)
-            except:
-                pass
-
-        mapping[topic_name] = int(thread_id)
-
-        try:
-            with open(mapping_file, "w") as f:
-                json.dump(mapping, f, indent=2)
-            return jsonify({'success': True, 'message': f'Topic {topic_name} ajouté avec ID {thread_id}'})
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
-
-@app.route('/api/telegram/topics/<topic_name>', methods=['DELETE'])
-def delete_telegram_topic(topic_name):
-    """Remove a Telegram topic mapping"""
-    mapping_file = "telegram_topics.json"
-
-    with telegram_topics_lock:
-        mapping = {}
-        if os.path.exists(mapping_file):
-            try:
-                with open(mapping_file, "r") as f:
-                    mapping = json.load(f)
-            except:
-                pass
-
-        if topic_name in mapping:
-            del mapping[topic_name]
-            try:
-                with open(mapping_file, "w") as f:
-                    json.dump(mapping, f, indent=2)
-                return jsonify({'success': True, 'message': f'Topic {topic_name} supprimé'})
-            except Exception as e:
-                return jsonify({'error': str(e)}), 500
-        else:
-            return jsonify({'error': 'Topic not found'}), 404
 
 @app.route('/api/stats')
 def get_stats():
@@ -701,94 +625,19 @@ def calculate_total_size():
 
     return total_size
 
-# --- Telegram Helpers ---
-def get_or_create_topic(topic_name):
-    """
-    Vérifie si un topic existe pour ce nom, sinon le crée.
-    Retourne le message_thread_id.
-    Thread-safe grâce au verrou telegram_topics_lock.
-    """
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return None
 
-    mapping_file = "telegram_topics.json"
-
-    # Utiliser un verrou pour éviter les race conditions
-    with telegram_topics_lock:
-        # Recharger le mapping à chaque fois (au cas où il a été modifié par un autre thread)
-        mapping = {}
-        if os.path.exists(mapping_file):
-            try:
-                with open(mapping_file, "r") as f:
-                    mapping = json.load(f)
-            except Exception as e:
-                emit_log(f"Erreur lecture telegram_topics.json: {str(e)}", "warning")
-
-        # Si le topic existe déjà dans notre mapping, le retourner
-        if topic_name in mapping:
-            # Pas de log pour éviter la verbosité
-            return mapping[topic_name]
-
-        # Le topic n'existe pas dans notre mapping, le créer
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/createForumTopic"
-        data = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "name": topic_name
-        }
-
-        try:
-            response = requests.post(url, json=data)
-            resp_data = response.json()
-
-            if resp_data.get("ok"):
-                thread_id = resp_data["result"]["message_thread_id"]
-                # Sauvegarder le mapping
-                mapping[topic_name] = thread_id
-                try:
-                    with open(mapping_file, "w") as f:
-                        json.dump(mapping, f, indent=2)
-                    # Pas de log, on laisse le message d'envoi de vidéo parler
-                except Exception as e:
-                    emit_log(f"Erreur sauvegarde mapping: {str(e)}", "warning", "TELEGRAM")
-                return thread_id
-            else:
-                error_desc = resp_data.get('description', 'Unknown error')
-                emit_log(f"Erreur création topic '{topic_name}': {error_desc}", "error", "TELEGRAM")
-                return None
-        except Exception as e:
-            emit_log(f"Erreur connexion: {e}", "error", "TELEGRAM")
-            return None
-
-def send_telegram_video(video_path, caption, topic_name):
-    """Envoie une vidéo dans le topic dédié."""
-    thread_id = get_or_create_topic(topic_name)
-    if not thread_id:
-        return
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
-    
-    try:
-        with open(video_path, "rb") as video_file:
-            files = {"video": video_file}
-            data = {
-                "chat_id": TELEGRAM_CHAT_ID,
-                "message_thread_id": thread_id,
-                "caption": caption
-            }
-            response = requests.post(url, data=data, files=files)
-            
-        if response.json().get("ok"):
-            pass
-        else:
-            emit_log(f"Échec envoi: {response.json().get('description')}", "error", "TELEGRAM")
-    except Exception as e:
-        emit_log(f"Erreur envoi: {e}", "error", "TELEGRAM")
 
 def background_download_task(username, platform, min_sleep, max_sleep, force_update=False):
     """Background task to run the download process."""
     global active_tasks
     active_tasks[username] = "running"
     start_time = time.time()
+
+    # Cookies file for TikTok authentication
+    cookies_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tiktok.com_cookies.txt')
+    if not os.path.exists(cookies_file):
+        cookies_file = None
+        emit_log("⚠ Fichier cookies non trouvé, téléchargement sans authentification", "warning", "SYSTEM")
 
     try:
         # Vérifier si shutdown demandé
@@ -821,7 +670,8 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
             platform,
             limit=None,
             callback_log=log_callback,
-            force_update=force_update
+            force_update=force_update,
+            cookies_file=cookies_file
         )
 
         for video in video_generator:
@@ -845,10 +695,18 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         items_to_download = []
         slideshow_count = 0
         video_count = 0
+        unknown_count = 0
 
         for video in videos_raw:
             # Use cached is_slideshow for performance
-            item_type = 'slideshow' if is_slideshow(video['url'], username=username) else 'video'
+            slideshow_flag = is_slideshow(video['url'], username=username, cookies_file=cookies_file)
+            if slideshow_flag is None:
+                # Type inconnu (cookies expirés, 403, réseau...) : signalé en erreur,
+                # NON enregistré dans l'historique pour être réessayé au prochain lancement
+                unknown_count += 1
+                emit_log(f"Type inconnu pour {video['id']} (cookies/réseau ?) - ignoré, réessai au prochain lancement", "error", "SCAN")
+                continue
+            item_type = 'slideshow' if slideshow_flag else 'video'
             items_to_download.append({
                 'url': video['url'],
                 'id': video['id'],
@@ -872,7 +730,6 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         # 3. Display initial statistics
         total_videos_on_profile = len(history) + len(videos_raw)  # Approximation
         mode_text = "Incrémental (seuil: 10 doublons)" if not force_update else "MAJ forcée (toutes les vidéos)"
-        telegram_enabled = TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
 
         emit_stats_header(
             username=username,
@@ -883,8 +740,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
             slideshows=slideshow_count,
             mode=mode_text,
             min_sleep=min_sleep,
-            max_sleep=max_sleep,
-            telegram_enabled=telegram_enabled
+            max_sleep=max_sleep
         )
         emit_log("", "info", "DOWNLOAD")  # Ligne vide
         emit_log(f"Démarrage du téléchargement", "info", "DOWNLOAD")
@@ -893,7 +749,6 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         # 4. Download Videos and Slideshows with progress bar
         downloaded_videos = 0
         downloaded_slideshows = 0
-        telegram_sent_count = 0
         total_size_mb = 0.0
         last_progress_time = time.time()  # Pour afficher la barre toutes les minutes
 
@@ -922,12 +777,19 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
 
             if item_type == 'slideshow':
                 emit_log(f"[{i+1}/{len(items_to_download)}] Slideshow en cours...", "info", "DOWNLOAD")
-                success = download_slideshow(item_url, username, item_id)
+                success = download_slideshow(item_url, username, item_id, cookies_file=cookies_file)
             else:
                 emit_log(f"[{i+1}/{len(items_to_download)}] Vidéo en cours...", "info", "DOWNLOAD")
-                success = download_video(item_url, username, item_id)
+                success = download_video(item_url, username, item_id, cookies_file=cookies_file)
 
             download_duration = time.time() - download_start
+
+            # Vidéo : un fichier vérifié est obligatoire avant d'enregistrer un succès
+            video_files = []
+            if success and item_type != 'slideshow':
+                video_files = find_downloaded_videos(username, item_id)
+                if not video_files:
+                    success = False
 
             if success:
                 if item_type == 'slideshow':
@@ -947,11 +809,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
                     # Trouver le fichier téléchargé pour obtenir sa taille
                     file_size = 0
                     try:
-                        found_file = None
-                        for f in os.listdir(user_dir):
-                            if item_id in f and f.endswith(".mp4"):
-                                found_file = os.path.join(user_dir, f)
-                                break
+                        found_file = video_files[0] if video_files else None
 
                         if found_file:
                             file_size = os.path.getsize(found_file)
@@ -959,11 +817,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
                             total_size_mb += file_size_mb
                             emit_log(f"[{i+1}/{len(items_to_download)}] {os.path.basename(found_file)} ({download_duration:.1f}s)", "success", "DOWNLOAD")
 
-                            # Telegram
-                            if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-                                send_telegram_video(found_file, f"Nouveau TikTok de @{username} !\n{item_url}", username)
-                                telegram_sent_count += 1
-                                emit_log("Envoyée", "success", "TELEGRAM")
+
                         else:
                             emit_log(f"[{i+1}/{len(items_to_download)}] Téléchargée ({download_duration:.1f}s)", "success", "DOWNLOAD")
 
@@ -981,7 +835,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
                 # Afficher si 60 secondes se sont écoulées depuis le dernier affichage
                 if current_time - last_progress_time >= 60:
                     total_downloaded = downloaded_videos + downloaded_slideshows
-                    emit_progress_bar(total_downloaded, len(items_to_download), elapsed, total_size_mb, telegram_sent_count)
+                    emit_progress_bar(total_downloaded, len(items_to_download), elapsed, total_size_mb)
                     last_progress_time = current_time
 
             else:
@@ -995,7 +849,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         total_time = time.time() - start_time
         total_downloaded = downloaded_videos + downloaded_slideshows
         if total_downloaded > 0:
-            emit_progress_bar(total_downloaded, len(items_to_download), total_time, total_size_mb, telegram_sent_count)
+            emit_progress_bar(total_downloaded, len(items_to_download), total_time, total_size_mb)
 
         # Final summary
         minutes = int(total_time // 60)
@@ -1016,6 +870,8 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         emit_log(f"    - Slideshows:                 {downloaded_slideshows}", "info", "SUMMARY")
         failed_count = len(items_to_download) - total_downloaded
         emit_log(f"  Échecs:                         {failed_count}", "info", "SUMMARY")
+        if unknown_count:
+            emit_log(f"  Type inconnu (réessai prévu):   {unknown_count}", "error", "SUMMARY")
         emit_log(f"  Durée totale:                   {minutes}m {seconds:02d}s", "info", "SUMMARY")
         emit_log(f"  Taille totale:                  {total_size_mb:.1f} MB", "info", "SUMMARY")
         if total_downloaded > 0 and total_time > 0:
@@ -1023,11 +879,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
             emit_log(f"  Vitesse moyenne:                {avg_speed:.1f} MB/min", "info", "SUMMARY")
         emit_log("", "info", "SUMMARY")
 
-        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            emit_log("Telegram:", "info", "SUMMARY")
-            emit_log(f"  Envoyées:                       {telegram_sent_count}/{downloaded_videos}", "info", "SUMMARY")
-            emit_log(f"  Topic:                          {username} (ID: mappé)", "info", "SUMMARY")
-            emit_log("", "info", "SUMMARY")
+
 
         emit_log("Stockage:", "info", "SUMMARY")
         emit_log(f"  Dossier:                        downloads/{username}/", "info", "SUMMARY")
@@ -1055,4 +907,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
             del active_threads[username]
 
 if __name__ == '__main__':
+    from preflight import check_environment
+    for problem in check_environment('tiktok.com_cookies.txt'):
+        print(f"[preflight] {problem}")
     app.run(debug=True, host='0.0.0.0', port=5001)

@@ -1,3 +1,6 @@
-yt-dlp
-flask>=3.0.0
+# Prerequis systeme : ffmpeg et ffprobe doivent etre installes et accessibles dans le PATH.
+yt-dlp>=2026.8.19,<2027
+gallery-dl>=1.29.4,<2
+flask>=3.1.2,<4
+requests>=2.32.5,<3
 gunicorn>=21.2.0

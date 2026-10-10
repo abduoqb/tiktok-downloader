@@ -13,7 +13,8 @@ from main import (
     is_slideshow,
     save_to_history,
     append_link_to_file,
-    get_user_dir
+    get_user_dir,
+    find_downloaded_videos
 )
 import os
 
@@ -55,7 +56,8 @@ class PipelineDownloader:
                                min_sleep=0, max_sleep=0,
                                force_update=False,
                                limit=None,
-                               progress_callback=None):
+                               progress_callback=None,
+                               cookies_browser=None):
         """
         Télécharge avec pipeline extraction->téléchargement
 
@@ -67,6 +69,7 @@ class PipelineDownloader:
             force_update: Force le scan complet
             limit: Limite de vidéos
             progress_callback: Fonction callback(event_type, data)
+            cookies_browser: Browser to extract cookies from
 
         Returns:
             dict: Statistiques finales
@@ -88,7 +91,7 @@ class PipelineDownloader:
         # Thread 1: Extraction
         extractor_thread = threading.Thread(
             target=self._extractor_worker,
-            args=(username, history, platform, limit, force_update, log_callback, progress_callback),
+            args=(username, history, platform, limit, force_update, log_callback, progress_callback, cookies_browser),
             daemon=True
         )
 
@@ -103,7 +106,8 @@ class PipelineDownloader:
                 future = executor.submit(
                     self._downloader_worker,
                     username,
-                    progress_callback
+                    progress_callback,
+                    cookies_browser
                 )
                 download_futures.append(future)
 
@@ -128,7 +132,7 @@ class PipelineDownloader:
         return self.stats
 
     def _extractor_worker(self, username, history, platform, limit,
-                         force_update, log_callback, progress_callback):
+                         force_update, log_callback, progress_callback, cookies_browser):
         """Thread d'extraction - alimente la queue"""
         try:
             # Générateur de vidéos
@@ -138,7 +142,8 @@ class PipelineDownloader:
                 platform,
                 limit=limit,
                 callback_log=log_callback,
-                force_update=force_update
+                force_update=force_update,
+                cookies_browser=cookies_browser
             )
 
             # Alimenter la queue au fur et à mesure
@@ -170,7 +175,7 @@ class PipelineDownloader:
                     'total': self.stats['extracted']
                 })
 
-    def _downloader_worker(self, username, progress_callback):
+    def _downloader_worker(self, username, progress_callback, cookies_browser):
         """Thread de téléchargement - consomme la queue"""
         user_dir = get_user_dir(username)
 
@@ -190,11 +195,25 @@ class PipelineDownloader:
 
                 # Détecter le type (avec cache)
                 start_time = time.time()
-                item_type = 'slideshow' if is_slideshow(video_url, username=username) else 'video'
+                slideshow_flag = is_slideshow(video_url, username=username, cookies_browser=cookies_browser)
+
+                if slideshow_flag is None:
+                    # Type inconnu (cookies expirés, 403, réseau...) : signalé en erreur,
+                    # NON enregistré dans l'historique pour être réessayé au prochain lancement
+                    with self.stats_lock:
+                        self.stats['failed'] += 1
+                    if progress_callback:
+                        progress_callback('error', {
+                            'message': f'Type inconnu pour {video_id} (slideshow/vidéo), réessai au prochain lancement'
+                        })
+                    self.video_queue.task_done()
+                    continue
+
+                item_type = 'slideshow' if slideshow_flag else 'video'
 
                 # Télécharger
                 if item_type == 'slideshow':
-                    success = download_slideshow(video_url, username, video_id)
+                    success = download_slideshow(video_url, username, video_id, cookies_browser=cookies_browser)
 
                     if success:
                         # Compter images
@@ -224,18 +243,16 @@ class PipelineDownloader:
                                       item_type="slideshow", success=False)
 
                 else:  # video
-                    success = download_video(video_url, username, video_id)
+                    success = download_video(video_url, username, video_id, cookies_browser=cookies_browser)
 
-                    if success:
+                    # Fichier vérifié obligatoire avant d'enregistrer un succès
+                    video_files = find_downloaded_videos(username, video_id) if success else []
+
+                    if success and video_files:
                         # Trouver taille
-                        file_size = 0
-                        filename = None
-                        for f in os.listdir(user_dir):
-                            if video_id in f and f.endswith('.mp4'):
-                                filename = f
-                                file_path = os.path.join(user_dir, f)
-                                file_size = os.path.getsize(file_path)
-                                break
+                        file_path = video_files[0]
+                        filename = os.path.basename(file_path)
+                        file_size = os.path.getsize(file_path)
 
                         save_to_history(username, video_id, url=video_url,
                                       item_type="video", file_size=file_size, success=True)
@@ -268,7 +285,8 @@ class PipelineDownloader:
 
 def download_with_streaming_pipeline(username, platform='tiktok',
                                      max_workers=3, limit=None,
-                                     progress_callback=None):
+                                     progress_callback=None,
+                                     cookies_browser=None):
     """
     Fonction helper pour télécharger avec pipeline
 
@@ -278,6 +296,7 @@ def download_with_streaming_pipeline(username, platform='tiktok',
         max_workers: Nombre de workers parallèles
         limit: Limite de vidéos
         progress_callback: Fonction callback(event_type, data)
+        cookies_browser: Browser to extract cookies from
 
     Returns:
         dict: Statistiques
@@ -307,7 +326,8 @@ def download_with_streaming_pipeline(username, platform='tiktok',
         username=username,
         platform=platform,
         limit=limit,
-        progress_callback=callback
+        progress_callback=callback,
+        cookies_browser=cookies_browser
     )
 
 

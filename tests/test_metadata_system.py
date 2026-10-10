@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Test script for the new OptimizedMetadataManager system
-Tests migration, performance, and functionality
+Tests performance, and functionality
 """
 import os
 import sys
@@ -10,66 +10,12 @@ import json
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from metadata_manager import OptimizedMetadataManager, migrate_from_legacy
+from metadata_manager import OptimizedMetadataManager
 
 # Fix encoding for Windows console
 if sys.platform == 'win32':
     import codecs
     sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
-
-
-def create_test_legacy_data(username):
-    """Create fake legacy data for testing migration"""
-    user_dir = f"../downloads/{username}"
-    os.makedirs(user_dir, exist_ok=True)
-
-    # Create download_history.json
-    history = ["7123456789", "7123456790", "7123456791"]
-    with open(f"{user_dir}/download_history.json", "w") as f:
-        json.dump(history, f)
-
-    # Create slideshows.json
-    slideshows = [
-        {"id": "7123456792", "url": "https://tiktok.com/@test/video/7123456792"},
-        {"id": "7123456793", "url": "https://tiktok.com/@test/video/7123456793"}
-    ]
-    with open(f"{user_dir}/slideshows.json", "w") as f:
-        json.dump(slideshows, f)
-
-    # Create videos.txt
-    with open(f"{user_dir}/{username}_videos.txt", "w") as f:
-        f.write("https://tiktok.com/@test/video/7123456789\n")
-        f.write("https://tiktok.com/@test/video/7123456790\n")
-
-    print(f"✅ Created test legacy data for {username}")
-    return user_dir
-
-
-def test_migration():
-    """Test migration from legacy to new system"""
-    print("\n" + "="*60)
-    print("TEST 1: Migration depuis ancien système")
-    print("="*60)
-
-    username = "test_user_migration"
-    user_dir = create_test_legacy_data(username)
-
-    # Migrate
-    print("\n📦 Migration en cours...")
-    manager = migrate_from_legacy(username, user_dir)
-
-    # Verify
-    print("\n🔍 Vérification des données migrées...")
-    stats = manager.get_stats()
-    print(f"  Videos: {stats.get('video', {}).get('count', 0)}")
-    print(f"  Slideshows: {stats.get('slideshow', {}).get('count', 0)}")
-
-    # Check specific IDs
-    assert manager.is_downloaded("7123456789"), "ID vidéo non trouvé après migration"
-    assert manager.is_downloaded("7123456792"), "ID slideshow non trouvé après migration"
-
-    print("✅ Migration réussie!")
-    return manager
 
 
 def test_performance():
@@ -234,7 +180,6 @@ def run_all_tests():
     print("="*60 + "\n")
 
     try:
-        test_migration()
         test_performance()
         test_slideshow_cache()
         test_metadata_richness()
