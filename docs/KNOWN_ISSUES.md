@@ -12,6 +12,14 @@ Aucun bug critique connu.
 
 ## 🟡 Mineur
 
+### Mode incrémental après un téléchargement partiel (corrigé en 1.8.0)
+
+Avant la 1.8.0, l'arrêt après 10 vidéos connues empêchait d'atteindre les anciennes
+vidéos après un téléchargement partiel (limite, arrêt, échec). Corrigé : un profil sans
+`scan_state.json` est entièrement scanné une première fois ; le mode rapide ne s'active
+qu'ensuite. À noter : les types inconnus (non historisés) empêchent le marquage « scanné »,
+et « Tout rescanner » / `--force-update` force un nouveau passage complet.
+
 ### Limite de téléchargement ignorée dans l'interface web
 **Date**: 2025-11-22
 **Status**: ✅ Résolu (v1.6.0)
@@ -114,7 +122,8 @@ délai de 300 s, rien de téléchargé si on interrompt pendant le listing.
 traiter chaque vidéo dès qu'elle arrive, plutôt que des lots `--range 1-10`,
 `11-20` qui reparcourent le profil à chaque fois (et `--range` compte des
 fichiers, pas des posts). L'arrêt incrémental (10 vidéos connues) et `limit`
-fonctionnent naturellement en flux.
+fonctionnent naturellement en flux (l'arrêt incrémental n'est actif qu'après un premier
+scan complet réussi, voir `scan_state.json`).
 
 **À prévoir**: plus de total connu à l'avance (progression « i traitées » au
 lieu de « i/n »), arrêt propre si le listing échoue en cours de route, et

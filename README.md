@@ -35,7 +35,7 @@ python main.py nom_du_compte --download --cookies-file tiktok.com_cookies.txt
 
 ## Fonctionnalités
 
-- Extraction des liens d'un profil et téléchargement incrémental (s'arrête après 10 vidéos consécutives déjà connues).
+- Extraction des liens d'un profil et téléchargement incrémental (après un premier scan complet automatique, s'arrête après 10 vidéos consécutives déjà connues).
 - Vidéos **et slideshows** (les images sont rangées dans un dossier par slideshow).
 - **Toujours en H.264** : les vidéos HEVC/AV1/VP9 sont converties automatiquement (sinon écran noir avec le son dans les navigateurs).
 - Nouvelle tentative automatique (3 essais) et pauses aléatoires anti-bannissement.
@@ -150,7 +150,12 @@ Des pauses trop courtes peuvent faire bannir votre IP.
 
 ### Mode incrémental
 
-Les vidéos sont parcourues de la plus récente à la plus ancienne. L'extraction s'arrête après 10 vidéos consécutives déjà dans l'historique, donc un `Sync` régulier est rapide. `--force-update` désactive cet arrêt.
+Les vidéos sont parcourues de la plus récente à la plus ancienne. Une fois un profil **entièrement scanné**, l'extraction s'arrête après 10 vidéos consécutives déjà dans l'historique, donc un `Sync` régulier est rapide.
+
+- **Premier scan complet automatique** : tant qu'un profil n'a pas été entièrement scanné (tous les profils existants au départ), l'ensemble du profil est parcouru, les vidéos déjà connues étant simplement ignorées. Cela rattrape les téléchargements partiels (limite, arrêt, échec).
+- **Le mode rapide ne s'active qu'après un scan complet réussi** : listing terminé sans erreur, sans arrêt, tous les éléments traités et aucun type inconnu. L'état est mémorisé dans `downloads/<compte>/scan_state.json`. Un run limité par `Limite`, arrêté ou en erreur ne marque pas le profil.
+- **« Tout rescanner » / `--force-update`** n'est plus nécessaire pour retrouver les anciennes vidéos : il sert à retenter les vidéos en échec ou à forcer un nouveau passage complet.
+- Les modes « liste seule » (sans `--download`, bouton « Lister les liens ») profitent du scan complet automatique mais ne modifient jamais l'état.
 
 ### Échecs
 

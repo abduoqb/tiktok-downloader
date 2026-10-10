@@ -20,6 +20,55 @@ def get_user_dir(username):
     """Returns the directory path for a specific user."""
     return os.path.join("downloads", username)
 
+SCAN_STATE_FILENAME = "scan_state.json"
+
+
+def _scan_state_path(username):
+    return os.path.join(get_user_dir(username), SCAN_STATE_FILENAME)
+
+
+def load_scan_state(username):
+    """Etat de scan du profil : {"fully_scanned": bool, "completed_at": str | None}.
+
+    Fichier absent, illisible ou invalide => fully_scanned False (scan complet a faire).
+    """
+    state = {"fully_scanned": False, "completed_at": None}
+    try:
+        with open(_scan_state_path(username), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return state
+    if isinstance(data, dict) and data.get("fully_scanned") is True:
+        state["fully_scanned"] = True
+        completed = data.get("completed_at")
+        state["completed_at"] = completed if isinstance(completed, str) else None
+    return state
+
+
+def save_scan_state(username, fully_scanned):
+    """Ecrit l'etat de scan de facon atomique (fichier temporaire + os.replace)."""
+    user_dir = get_user_dir(username)
+    os.makedirs(user_dir, exist_ok=True)
+    path = _scan_state_path(username)
+    data = {
+        "fully_scanned": bool(fully_scanned),
+        "completed_at": datetime.now().isoformat(timespec="seconds") if fully_scanned else None,
+    }
+    fd, tmp_path = tempfile.mkstemp(dir=user_dir, prefix=".scan_state_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def get_metadata_manager(username):
     """
     Retourne ou crée un OptimizedMetadataManager pour l'utilisateur
@@ -417,31 +466,48 @@ def _gallerydl_entries(url, limit, history_size, cookies_file, cookies_browser):
         thread.join(timeout=5)
 
 
-def _filter_entries(entries, history, limit, force_update, log):
-    """Logique aval commune : historique, arrêt incrémental, limite. Générateur de {'url','id'}."""
+def _filter_entries(entries, history, limit, force_update, log, scan_all=False, scan_report=None):
+    """Logique aval commune : historique, arrêt incrémental, limite. Générateur de {'url','id'}.
+
+    L'arrêt après 10 doublons consécutifs n'est appliqué que si NOT (force_update OR scan_all).
+    scan_report (dict, optionnel) : 'listed' (entrées vues) et 'ended_by'
+    ('exhausted' | 'incremental' | 'limit'). 'limit' est posé AVANT le dernier yield, car le
+    consommateur peut fermer le générateur dès qu'il a reçu assez d'éléments.
+    """
     new_videos_count = 0
     consecutive_matches = 0
+    allow_incremental = not (force_update or scan_all)
     for entry in entries:
         video_id = entry.get('id')
+        if scan_report is not None:
+            scan_report['listed'] = scan_report.get('listed', 0) + 1
 
         # INCREMENTAL CHECK (Smart Mode)
         if video_id in history:
             consecutive_matches += 1
-            if consecutive_matches >= 10 and not force_update:
+            if consecutive_matches >= 10 and allow_incremental:
                 log(f"Found {consecutive_matches} consecutive existing videos. Stopping extraction (Smart Incremental Mode).", "warning")
+                if scan_report is not None:
+                    scan_report['ended_by'] = 'incremental'
                 break
         else:
             consecutive_matches = 0  # Reset counter if we find a new video
 
             video_url = entry.get('url') or entry.get('webpage_url')
             if video_url and video_id:
-                yield {'url': video_url, 'id': video_id}
                 new_videos_count += 1
+                hit_limit = bool(limit) and new_videos_count >= limit
+                if hit_limit and scan_report is not None:
+                    scan_report['ended_by'] = 'limit'
+                yield {'url': video_url, 'id': video_id}
 
                 # LIMIT CHECK
-                if limit and new_videos_count >= limit:
+                if hit_limit:
                     log(f"Limit of {limit} videos reached. Stopping extraction.", "warning")
                     break
+    else:
+        if scan_report is not None:
+            scan_report['ended_by'] = 'exhausted'
 
     return new_videos_count
 
@@ -464,7 +530,7 @@ def _explain_ytdlp_error(error_msg, log):
         log(f"Error extracting links: {error_msg}", "error")
 
 
-def get_video_links(username, history, platform="tiktok", limit=None, callback_log=None, force_update=False, cookies_browser=None, cookies_file=None):
+def get_video_links(username, history, platform="tiktok", limit=None, callback_log=None, force_update=False, cookies_browser=None, cookies_file=None, scan_all=None, scan_report=None):
     """
     Extracts video links for a given username using yt-dlp (repli gallery-dl pour TikTok).
     Stops if a video ID is already in history (Incremental Mode), unless force_update is True.
@@ -478,7 +544,21 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
     Args:
         cookies_browser: Browser to extract cookies from (chrome, firefox, edge, etc.)
         cookies_file: Path to cookies.txt file
+        scan_all: True = parcourt tout le profil (pas d'arrêt incrémental). None = auto :
+            True tant que le profil n'est pas fully_scanned (scan_state.json).
+        scan_report: dict rempli par la fonction : 'ended_by' ('exhausted' | 'incremental' |
+            'limit' | 'error') et 'listed' (entrées vues). Cette fonction ne modifie jamais
+            l'état de scan.
     """
+    if scan_report is None:
+        scan_report = {}
+    scan_report['listed'] = 0
+    scan_report['ended_by'] = 'error'  # valeur par défaut tant que le listing n'est pas terminé
+    auto_scan = False
+    if scan_all is None:
+        auto_scan = not load_scan_state(username)["fully_scanned"]
+        scan_all = auto_scan
+
     if platform.lower() == "tiktok":
         url = f"https://www.tiktok.com/@{username}"
     elif platform.lower() == "youtube":
@@ -496,6 +576,9 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
             callback_log(msg, level)
 
     log(f"Fetching videos for: {url}")
+    if auto_scan and not force_update:
+        log("Premier scan complet de ce profil : les vidéos déjà connues sont ignorées, "
+            "l'ensemble du profil est parcouru (le mode incrémental sera activé ensuite).", "info")
 
     capture = _YtdlpErrorCapture()
     ydl_opts = build_ydl_opts('list', cookies_file, cookies_browser, logger=capture)
@@ -516,7 +599,8 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
     ytdlp_error = None
     try:
         found = yield from _filter_entries(tracked(_ytdlp_entries(url, ydl_opts, log, username)),
-                                           history, limit, force_update, log)
+                                           history, limit, force_update, log,
+                                           scan_all=scan_all, scan_report=scan_report)
         if raw_count[0] == 0 and capture.errors:
             ytdlp_error = capture.errors[-1]
         else:
@@ -524,6 +608,7 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
     except Exception as e:
         if raw_count[0] > 0:
             # Listing interrompu en cours de route : on garde ce qui a été trouvé
+            scan_report['ended_by'] = 'error'
             _explain_ytdlp_error(str(e), log)
             return
         ytdlp_error = str(e)
@@ -541,6 +626,8 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
     # Erreur AVANT toute entrée -> RuntimeError combinée yt-dlp + gallery-dl.
     # Erreur APRÈS des entrées -> loggée en erreur, on garde ce qui a déjà été produit.
     gdl_count = [0]
+    scan_report['listed'] = 0
+    scan_report['ended_by'] = 'error'
 
     def gdl_tracked():
         for entry in _gallerydl_entries(url, limit, len(history), cookies_file, cookies_browser):
@@ -548,8 +635,10 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
             yield entry
 
     try:
-        found = yield from _filter_entries(gdl_tracked(), history, limit, force_update, log)
+        found = yield from _filter_entries(gdl_tracked(), history, limit, force_update, log,
+                                           scan_all=scan_all, scan_report=scan_report)
     except RuntimeError as e:
+        scan_report['ended_by'] = "error"
         if gdl_count[0] == 0:
             raise RuntimeError(
                 f"Listing impossible pour @{username} : yt-dlp ({ytdlp_error}) et gallery-dl ({e}) "

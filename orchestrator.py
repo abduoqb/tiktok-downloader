@@ -75,6 +75,39 @@ def _normalize_sleep(min_sleep, max_sleep):
     return (high, low) if low > high else (low, high)
 
 
+def _update_scan_state(username, stats, scan_report, items, critical_error, emit):
+    """Met à jour scan_state.json et stats['full_scan'] / stats['scan_complete'].
+
+    Le profil devient fully_scanned seulement si le listing est allé au bout (épuisé ou arrêt
+    incrémental), sans erreur ni arrêt, avec tous les éléments listés traités et aucun type
+    inconnu (non historisés). Sinon l'état est laissé tel quel, sauf si des éléments listés
+    n'ont pas été traités : un profil déjà scanné repasse alors à False.
+    """
+    ended_by = scan_report.get("ended_by")
+    stats["full_scan"] = bool(ended_by == "exhausted" and not stats["extraction_error"]
+                              and not critical_error)
+    try:
+        was_scanned = main.load_scan_state(username)["fully_scanned"]
+        all_treated = (len(stats["results"]) >= len(items)
+                       and not scan_report.get("interrupted"))
+        complete = (ended_by in ("exhausted", "incremental")
+                    and not stats["extraction_error"] and not critical_error
+                    and not stats["stopped"] and all_treated and stats["unknown"] == 0)
+        if complete:
+            if not was_scanned:
+                main.save_scan_state(username, True)
+                emit("Scan complet terminé : les prochaines mises à jour seront rapides "
+                     "(mode incrémental).", "success")
+            stats["scan_complete"] = True
+        elif was_scanned and not all_treated:
+            main.save_scan_state(username, False)
+            stats["scan_complete"] = False
+        else:
+            stats["scan_complete"] = was_scanned
+    except Exception as e:
+        emit(f"Impossible de mettre à jour l'état de scan : {e}", "warning")
+
+
 def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit=None,
                  force_update=False, cookies_file=None, cookies_browser=None, workers=1,
                  log=None, progress=None, should_stop=None, sleep=None, forward_extraction_logs=True):
@@ -106,7 +139,9 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
     Returns:
         dict: videos, slideshows, failed, unknown, skipped, downloaded (videos+slideshows),
         processed (downloaded+failed), total_extracted, size_mb,
-        duration_s, stopped, extraction_error (str | None), results (liste de dicts par élément traité).
+        duration_s, stopped, extraction_error (str | None), full_scan (le run a parcouru
+        tout le profil sans arrêt incrémental), scan_complete (état fully_scanned après le run),
+        results (liste de dicts par élément traité).
     """
     log_fn = log or _default_log
     should_stop_fn = should_stop or (lambda: False)
@@ -128,8 +163,13 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         "duration_s": 0.0,
         "stopped": False,
         "extraction_error": None,
+        "full_scan": False,
+        "scan_complete": False,
         "results": [],
     }
+    scan_report = {}
+    items = []
+    critical_error = False
     stats_lock = threading.Lock()
     stop_event = threading.Event()
 
@@ -313,16 +353,19 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         emit(f"Analyse du profil @{username}...", "info")
         extracted = []
         try:
+            scan_report.clear()
             generator = main.get_video_links(
                 username, history, platform, limit=limit,
                 # Log par défaut : get_video_links affiche déjà ses messages (pas de doublon)
                 callback_log=log if forward_extraction_logs else None,
                 force_update=force_update,
                 cookies_browser=cookies_browser, cookies_file=cookies_file,
+                scan_report=scan_report,
             )
             for video in generator or ():
                 if stop_requested():
                     emit("Arrêt demandé pendant l'extraction", "warning")
+                    scan_report["interrupted"] = True  # éléments listés non traités
                     break
                 extracted.append(video)
                 if limit and len(extracted) >= limit:
@@ -341,7 +384,6 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
                 emit(f"Impossible de sauvegarder les liens : {e}", "warning")
 
         # Filtrage : déjà dans l'historique (sauf force_update) ou doublon dans ce run
-        items = []
         seen = set()
         for video in extracted:
             video_id = video.get("id")
@@ -374,9 +416,11 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
                         except Exception as e:  # filet de sécurité, task ne lève pas
                             emit(f"Erreur inattendue d'un worker : {e}", "error")
     except Exception as e:
+        critical_error = True
         emit(f"Erreur critique : {e}", "error")
 
     stats["stopped"] = stop_event.is_set()
+    _update_scan_state(username, stats, scan_report, items, critical_error, emit)
     if stats["stopped"]:
         emit(f"Arrêt demandé pour @{username}", "warning")
     stats["duration_s"] = time.monotonic() - start

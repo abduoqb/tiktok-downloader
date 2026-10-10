@@ -37,6 +37,7 @@ class Fake:
         self.cookies = []              # (nom, cookies_file, cookies_browser)
         self.links_kwargs = None
         self.history_seen = None       # historique reçu par get_video_links
+        self.ended_by = "exhausted"    # valeur écrite dans scan_report par le faux listing
         self.on_download = None        # callable(id) appelé à chaque téléchargement
         self.lock = threading.Lock()
 
@@ -53,7 +54,10 @@ def fake(tmp_path, monkeypatch):
     user_dir = os.path.join("downloads", USERNAME)
 
     def get_video_links(username, history, platform="tiktok", limit=None, callback_log=None,
-                        force_update=False, cookies_browser=None, cookies_file=None):
+                        force_update=False, cookies_browser=None, cookies_file=None,
+                        scan_all=None, scan_report=None):
+        if scan_report is not None:
+            scan_report["ended_by"] = f.ended_by
         f.history_seen = set(history)
         f.links_kwargs = {"limit": limit, "force_update": force_update,
                           "cookies_file": cookies_file, "cookies_browser": cookies_browser}

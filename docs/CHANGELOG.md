@@ -5,6 +5,20 @@ Tous les changements notables de ce projet seront documentés dans ce fichier.
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [1.8.0] - 2026-10-10
+
+### Corrigé
+- **Mode incrémental après un téléchargement partiel** : l'arrêt après 10 vidéos consécutives déjà connues supposait que tout le plus ancien était téléchargé. Après une limite, un arrêt ou un échec, les anciennes vidéos n'étaient jamais atteintes (seul `force_update` les récupérait). L'arrêt incrémental n'est désormais autorisé que si le profil a déjà été entièrement scanné
+
+### Ajouté
+- État de scan par profil `downloads/<compte>/scan_state.json` (`fully_scanned`, `completed_at`), écriture atomique ; `main.load_scan_state` / `main.save_scan_state`
+- `get_video_links(scan_all=None, scan_report=None)` : `scan_all` automatique selon l'état ; `scan_report` renseigne `ended_by` (`exhausted` | `incremental` | `limit` | `error`) et `listed`
+- `run_download` renvoie `full_scan` et `scan_complete` et marque le profil comme scanné seulement après un run complet réussi (ni limite, ni arrêt, ni erreur, ni type inconnu)
+- Tests : `tests/test_scan_state.py`
+
+### Modifié
+- Les profils existants (sans `scan_state.json`) subissent un premier scan complet automatique ; « Tout rescanner » / `--force-update` ne sert plus qu'à retenter les échecs ou forcer un nouveau passage
+
 ## [1.7.0] - 2026-10-10
 
 ### Corrigé

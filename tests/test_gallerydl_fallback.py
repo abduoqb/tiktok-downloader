@@ -93,7 +93,8 @@ class FakeProc:
 
 
 @pytest.fixture
-def env(monkeypatch):
+def env(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)  # scan_state.json lu dans un downloads/ temporaire
     FakeYDL.mode = "json_error"
     FakeYDL.entries = []
     monkeypatch.setattr(main.yt_dlp, "YoutubeDL", FakeYDL)
@@ -185,6 +186,7 @@ def test_history_skipped_and_incremental_stop(env):
     ids = [str(100 - i) for i in range(15)]
     env.stdout = listing("999", *ids)
     history = set(ids[:12])
+    main.save_scan_state(USER, True)  # profil déjà entièrement scanné : mode incrémental actif
     out = run(history=history)
     assert [v["id"] for v in out] == ["999"]  # arrêt après 10 doublons consécutifs
 
