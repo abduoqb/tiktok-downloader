@@ -717,6 +717,10 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         total_downloaded = stats["downloaded"]
         processed = stats["processed"]
 
+        if stats.get("extraction_error") and stats["total_extracted"] == 0:
+            emit_log(f"Extraction échouée pour @{username} : {stats['extraction_error']}", "error", "DOWNLOAD")
+            return
+
         if processed == 0 and unknown_count == 0:
             return  # rien traité : l'orchestrateur a déjà loggé la raison
 

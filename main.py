@@ -234,12 +234,140 @@ def download_slideshow(video_url, username, video_id, cookies_browser=None, cook
         traceback.print_exc()
         return False
 
+class _YtdlpErrorCapture:
+    """Logger yt-dlp minimal : mémorise les erreurs (ignoreerrors=True les rend silencieuses)."""
+
+    def __init__(self):
+        self.errors = []
+
+    def debug(self, msg):
+        pass
+
+    def info(self, msg):
+        pass
+
+    def warning(self, msg):
+        pass
+
+    def error(self, msg):
+        self.errors.append(str(msg))
+
+
+GALLERYDL_LIST_TIMEOUT = 300
+GALLERYDL_PRINT_FORMAT = 'https://www.tiktok.com/@{author[uniqueId]}/{type}/{id}'
+_TIKTOK_ITEM_RE = re.compile(r'https?://(?:www\.)?tiktok\.com/@[\w.\-]+/(?:video|photo)/(\d+)')
+
+
+def _ytdlp_entries(url, ydl_opts, log, username):
+    """Entrées brutes du listing yt-dlp. Lève une exception si yt-dlp n'a rien pu extraire."""
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        if not info:
+            raise RuntimeError("yt-dlp n'a renvoyé aucune information")
+        if 'entries' in info:
+            log(f"Found channel/user: {info.get('title', username)}")
+            for entry in info['entries']:
+                if entry:
+                    yield entry
+        else:
+            yield info
+
+
+def _gallerydl_entries(url, limit, history_size, cookies_file, cookies_browser):
+    """Listing gallery-dl (`--no-download -N`) : entrées brutes {'id','url'}, ordre conservé, sans doublon.
+
+    Lève RuntimeError si gallery-dl est absent, expire ou échoue sans rien renvoyer.
+    Un listing réussi sans aucune vidéo renvoie simplement une liste vide (profil vide).
+    """
+    # `-g` n'affiche que les URLs CDN (gallery-dl >= 1.30) : on imprime l'URL du post via --print,
+    # sans rien télécharger (--no-download). Les lignes parasites sont filtrées par regex.
+    cmd = (['gallery-dl'] + build_gallerydl_cookie_args(cookies_file, cookies_browser)
+           + ['--no-download', '-N', GALLERYDL_PRINT_FORMAT])
+    if limit:
+        # Les éléments déjà historisés sont sautés en aval : on les compte dans la plage
+        cmd += ['--range', f'1-{limit + history_size}']
+    cmd.append(url.rstrip('/') + '/posts')  # l'URL de profil nue ne liste que avatar/posts
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8',
+                                errors='replace', timeout=GALLERYDL_LIST_TIMEOUT)
+    except FileNotFoundError:
+        raise RuntimeError("gallery-dl n'est pas installé (pip install gallery-dl)")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"gallery-dl a dépassé le délai de {GALLERYDL_LIST_TIMEOUT} s")
+
+    seen = set()
+    entries = []
+    for line in (result.stdout or '').splitlines():
+        match = _TIKTOK_ITEM_RE.search(line.strip())
+        if not match or match.group(1) in seen:
+            continue
+        seen.add(match.group(1))
+        entries.append({'id': match.group(1), 'url': match.group(0)})
+
+    if result.returncode != 0 and not entries:
+        detail = (result.stderr or '').strip().splitlines()
+        raise RuntimeError(f"gallery-dl a échoué (code {result.returncode})"
+                           + (f" : {detail[-1]}" if detail else ""))
+    return entries
+
+
+def _filter_entries(entries, history, limit, force_update, log):
+    """Logique aval commune : historique, arrêt incrémental, limite. Générateur de {'url','id'}."""
+    new_videos_count = 0
+    consecutive_matches = 0
+    for entry in entries:
+        video_id = entry.get('id')
+
+        # INCREMENTAL CHECK (Smart Mode)
+        if video_id in history:
+            consecutive_matches += 1
+            if consecutive_matches >= 10 and not force_update:
+                log(f"Found {consecutive_matches} consecutive existing videos. Stopping extraction (Smart Incremental Mode).", "warning")
+                break
+        else:
+            consecutive_matches = 0  # Reset counter if we find a new video
+
+            video_url = entry.get('url') or entry.get('webpage_url')
+            if video_url and video_id:
+                yield {'url': video_url, 'id': video_id}
+                new_videos_count += 1
+
+                # LIMIT CHECK
+                if limit and new_videos_count >= limit:
+                    log(f"Limit of {limit} videos reached. Stopping extraction.", "warning")
+                    break
+
+    return new_videos_count
+
+
+def _explain_ytdlp_error(error_msg, log):
+    """Messages actionnables pour les erreurs yt-dlp courantes."""
+    if "JSONDecodeError" in error_msg or "Failed to parse JSON" in error_msg:
+        log("Erreur JSON - Causes possibles :", "error")
+        log("  1. Cookies expirés -> Réexportez vos cookies TikTok", "error")
+        log("  2. yt-dlp obsolète -> Exécutez: pip install --upgrade yt-dlp", "error")
+        log("  3. Profil inexistant ou privé", "error")
+    elif "HTTP Error 403" in error_msg or "Forbidden" in error_msg:
+        log("Accès refusé (403) - Cookies invalides ou expirés", "error")
+        log("  -> Réexportez vos cookies TikTok dans tiktok.com_cookies.txt", "error")
+    elif "HTTP Error 404" in error_msg or "not found" in error_msg.lower():
+        log("Profil introuvable - Vérifiez que le nom d'utilisateur est correct", "error")
+    elif "getaddrinfo" in error_msg or "ConnectionError" in error_msg or "URLError" in error_msg:
+        log("Erreur réseau - Vérifiez votre connexion Internet", "error")
+    else:
+        log(f"Error extracting links: {error_msg}", "error")
+
+
 def get_video_links(username, history, platform="tiktok", limit=None, callback_log=None, force_update=False, cookies_browser=None, cookies_file=None):
     """
-    Extracts video links for a given username using yt-dlp.
+    Extracts video links for a given username using yt-dlp (repli gallery-dl pour TikTok).
     Stops if a video ID is already in history (Incremental Mode), unless force_update is True.
     Stops if the limit of new videos is reached.
     Generator: yields dicts with 'url' and 'id'.
+
+    Si yt-dlp ne peut pas lister le profil (exception, ou aucune entrée alors qu'une
+    erreur a été vue), bascule sur `gallery-dl`. Si les deux échouent, lève
+    RuntimeError (un profil réellement vide n'est PAS une erreur).
 
     Args:
         cookies_browser: Browser to extract cookies from (chrome, firefox, edge, etc.)
@@ -253,13 +381,18 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
         url = username
 
     def log(msg, level="info"):
-        print(f"[{level.upper()}] {msg}")
+        line = f"[{level.upper()}] {msg}"
+        try:
+            print(line)
+        except UnicodeEncodeError:  # console cp1252 (Windows) : ne jamais planter sur un log
+            print(line.encode('ascii', 'replace').decode('ascii'))
         if callback_log:
             callback_log(msg, level)
 
     log(f"Fetching videos for: {url}")
 
-    ydl_opts = build_ydl_opts('list', cookies_file, cookies_browser)
+    capture = _YtdlpErrorCapture()
+    ydl_opts = build_ydl_opts('list', cookies_file, cookies_browser, logger=capture)
 
     # Add cookies support for private accounts
     if cookies_file:
@@ -267,74 +400,49 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
     elif cookies_browser:
         log(f"Using cookies from {cookies_browser}", "info")
 
+    raw_count = [0]
 
-    new_videos_count = 0
-    consecutive_matches = 0
-    
+    def tracked(entries):
+        for entry in entries:
+            raw_count[0] += 1
+            yield entry
+
+    ytdlp_error = None
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Note: extract_info with download=False and extract_flat=True returns a dict
-            # If it's a playlist/channel, 'entries' is a generator (lazy).
-            info = ydl.extract_info(url, download=False)
-            
-            if not info:
-                log("Failed to extract info (None returned).", "error")
-                return
-
-            if 'entries' in info:
-                log(f"Found channel/user: {info.get('title', username)}")
-                # 'entries' can be a generator, so we iterate carefully
-                for entry in info['entries']:
-                    if entry:
-                        video_id = entry.get('id')
-                        
-                        # INCREMENTAL CHECK (Smart Mode)
-                        if video_id in history:
-                            consecutive_matches += 1
-                            if consecutive_matches >= 10 and not force_update:
-                                log(f"Found {consecutive_matches} consecutive existing videos. Stopping extraction (Smart Incremental Mode).", "warning")
-                                break
-                        else:
-                            consecutive_matches = 0 # Reset counter if we find a new video
-                            
-                            video_url = entry.get('url') or entry.get('webpage_url')
-                            if video_url and video_id:
-                                yield {'url': video_url, 'id': video_id}
-                                new_videos_count += 1
-                                
-                                # LIMIT CHECK
-                                if limit and new_videos_count >= limit:
-                                    log(f"Limit of {limit} videos reached. Stopping extraction.", "warning")
-                                    break
-            else:
-                video_url = info.get('url') or info.get('webpage_url')
-                video_id = info.get('id')
-                if video_url and video_id:
-                    if video_id not in history:
-                        yield {'url': video_url, 'id': video_id}
-                    else:
-                        log(f"Video {video_id} already in history.", "info")
-                    
-    except Exception as e:
-        error_msg = str(e)
-        # Provide specific actionable messages for common errors
-        if "JSONDecodeError" in error_msg or "Failed to parse JSON" in error_msg:
-            log("Erreur JSON - Causes possibles :", "error")
-            log("  1. Cookies expirés → Réexportez vos cookies TikTok", "error")
-            log("  2. yt-dlp obsolète → Exécutez: pip install --upgrade yt-dlp", "error")
-            log("  3. Profil inexistant ou privé", "error")
-        elif "HTTP Error 403" in error_msg or "Forbidden" in error_msg:
-            log("Accès refusé (403) - Cookies invalides ou expirés", "error")
-            log("  → Réexportez vos cookies TikTok dans tiktok.com_cookies.txt", "error")
-        elif "HTTP Error 404" in error_msg or "not found" in error_msg.lower():
-            log(f"Profil introuvable - Vérifiez que le nom d'utilisateur est correct", "error")
-        elif "getaddrinfo" in error_msg or "ConnectionError" in error_msg or "URLError" in error_msg:
-            log("Erreur réseau - Vérifiez votre connexion Internet", "error")
+        found = yield from _filter_entries(tracked(_ytdlp_entries(url, ydl_opts, log, username)),
+                                           history, limit, force_update, log)
+        if raw_count[0] == 0 and capture.errors:
+            ytdlp_error = capture.errors[-1]
         else:
-            log(f"Error extracting links: {e}", "error")
+            log(f"Extraction finished. Found {found} new videos.", "success")
+    except Exception as e:
+        if raw_count[0] > 0:
+            # Listing interrompu en cours de route : on garde ce qui a été trouvé
+            _explain_ytdlp_error(str(e), log)
+            return
+        ytdlp_error = str(e)
+
+    if ytdlp_error is None:
         return
 
-    log(f"Extraction finished. Found {new_videos_count} new videos.", "success")
+    _explain_ytdlp_error(ytdlp_error, log)
+    if platform.lower() != "tiktok":
+        raise RuntimeError(f"Listing impossible pour {url} : {ytdlp_error}. "
+                           "Vérifiez les cookies et que le compte existe.")
+
+    log("yt-dlp ne peut plus lister ce profil, repli sur gallery-dl", "warning")
+    try:
+        entries = _gallerydl_entries(url, limit, len(history), cookies_file, cookies_browser)
+    except RuntimeError as e:
+        raise RuntimeError(
+            f"Listing impossible pour @{username} : yt-dlp ({ytdlp_error}) et gallery-dl ({e}) "
+            "ont échoué. Vérifiez les cookies (tiktok.com_cookies.txt) et que le compte existe."
+        ) from e
+
+    log(f"gallery-dl a listé {len(entries)} élément(s)", "info")
+    found = yield from _filter_entries(entries, history, limit, force_update, log)
+    log(f"Extraction finished. Found {found} new videos.", "success")
+
 
 def organize_slideshow(output_dir, video_id):
     """Post-process downloaded files to organize slideshows into folders."""
@@ -591,7 +699,7 @@ def download_video(video_url, username, video_id, retries=3, cookies_browser=Non
                             new_path = os.path.join(output_dir, new_name)
                             try:
                                 os.rename(file_path, new_path)
-                                print(f"Renamed: {old_name} → {new_name}")
+                                print(f"Renamed: {old_name} -> {new_name}")
                             except Exception as e:
                                 print(f"Could not rename: {e}")
 
@@ -779,6 +887,9 @@ def main():
             log=cli_log,
             forward_extraction_logs=False,  # get_video_links affiche déjà ses messages
         )
+        if stats.get("extraction_error") and not stats.get("total_extracted"):
+            print(f"ERROR: {stats['extraction_error']}")
+            sys.exit(1)
         print("\nDownload Summary:")
         print(f"   Videos: {stats['videos']}")
         print(f"   Slideshows: {stats['slideshows']}")
@@ -794,7 +905,11 @@ def main():
     videos_generator = get_video_links(username, history, args.platform, args.limit, force_update=args.force_update, cookies_browser=args.cookies_browser, cookies_file=args.cookies_file)
 
     # Convert generator to list for processing
-    videos = list(videos_generator)
+    try:
+        videos = list(videos_generator)
+    except Exception as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
 
     if videos:
         save_links_to_file(username, videos)

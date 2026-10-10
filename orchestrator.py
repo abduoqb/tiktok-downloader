@@ -106,7 +106,7 @@ def run_download(username, platform="tiktok", *, min_sleep=5, max_sleep=15, limi
     Returns:
         dict: videos, slideshows, failed, unknown, skipped, downloaded (videos+slideshows),
         processed (downloaded+failed), total_extracted, size_mb,
-        duration_s, stopped, results (liste de dicts par élément traité).
+        duration_s, stopped, extraction_error (str | None), results (liste de dicts par élément traité).
     """
     log_fn = log or _default_log
     should_stop_fn = should_stop or (lambda: False)
@@ -127,6 +127,7 @@ def run_download(username, platform="tiktok", *, min_sleep=5, max_sleep=15, limi
         "size_mb": 0.0,
         "duration_s": 0.0,
         "stopped": False,
+        "extraction_error": None,
         "results": [],
     }
     stats_lock = threading.Lock()
@@ -327,6 +328,7 @@ def run_download(username, platform="tiktok", *, min_sleep=5, max_sleep=15, limi
                 if limit and len(extracted) >= limit:
                     break
         except Exception as e:
+            stats["extraction_error"] = str(e)
             emit(f"Erreur d'extraction : {e}", "error")
 
         stats["total_extracted"] = len(extracted)
