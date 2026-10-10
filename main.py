@@ -4,7 +4,6 @@ import os
 import sys
 import json
 import time
-import random
 import subprocess
 import glob
 import shutil
@@ -12,6 +11,7 @@ import re
 import tempfile
 from datetime import datetime
 from metadata_manager import OptimizedMetadataManager
+from ytdlp_options import build_ydl_opts, build_gallerydl_cookie_args
 
 def get_user_dir(username):
     """Returns the directory path for a specific user."""
@@ -68,16 +68,7 @@ def is_slideshow(video_url, username=None, use_cache=True, cookies_browser=None,
 
     # API call
     try:
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,  # Need full info
-        }
-
-        if cookies_file:
-            ydl_opts['cookiefile'] = cookies_file
-        elif cookies_browser:
-            ydl_opts['cookiesfrombrowser'] = (cookies_browser,)
+        ydl_opts = build_ydl_opts('probe', cookies_file, cookies_browser)
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
@@ -121,16 +112,7 @@ def download_slideshow(video_url, username, video_id, cookies_browser=None, cook
     """
     try:
         # Get upload date from TikTok
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-        }
-
-        if cookies_file:
-            ydl_opts['cookiefile'] = cookies_file
-        elif cookies_browser:
-            ydl_opts['cookiesfrombrowser'] = (cookies_browser,)
+        ydl_opts = build_ydl_opts('probe', cookies_file, cookies_browser)
 
         upload_date = None
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -172,10 +154,7 @@ def download_slideshow(video_url, username, video_id, cookies_browser=None, cook
             ]
 
             # Cookies (options vérifiées avec gallery-dl --help : -C/--cookies, --cookies-from-browser)
-            if cookies_file:
-                cmd += ['--cookies', cookies_file]
-            elif cookies_browser:
-                cmd += ['--cookies-from-browser', cookies_browser]
+            cmd += build_gallerydl_cookie_args(cookies_file, cookies_browser)
 
             cmd.append(video_url)
 
@@ -190,7 +169,7 @@ def download_slideshow(video_url, username, video_id, cookies_browser=None, cook
 
             # Find downloaded files in temp directory
             downloaded_files = glob.glob(os.path.join(glob.escape(temp_dir), '**', '*'), recursive=True)
-            image_files = [f for f in downloaded_files if os.path.isfile(f) and f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
+            image_files = [f for f in downloaded_files if os.path.isfile(f) and f.lower().endswith(IMAGE_EXTENSIONS)]
             audio_files = [f for f in downloaded_files if os.path.isfile(f) and f.lower().endswith(('.mp3', '.m4a', '.aac'))]
 
             if not image_files:
@@ -260,7 +239,7 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
     Extracts video links for a given username using yt-dlp.
     Stops if a video ID is already in history (Incremental Mode), unless force_update is True.
     Stops if the limit of new videos is reached.
-    Returns a list of dictionaries containing 'url' and 'id'.
+    Generator: yields dicts with 'url' and 'id'.
 
     Args:
         cookies_browser: Browser to extract cookies from (chrome, firefox, edge, etc.)
@@ -280,18 +259,12 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
 
     log(f"Fetching videos for: {url}")
 
-    ydl_opts = {
-        'extract_flat': True,
-        'quiet': True,
-        'ignoreerrors': True,
-    }
+    ydl_opts = build_ydl_opts('list', cookies_file, cookies_browser)
 
     # Add cookies support for private accounts
     if cookies_file:
-        ydl_opts['cookiefile'] = cookies_file
         log(f"Using cookies from file: {cookies_file}", "info")
     elif cookies_browser:
-        ydl_opts['cookiesfrombrowser'] = (cookies_browser,)
         log(f"Using cookies from {cookies_browser}", "info")
 
 
@@ -382,7 +355,7 @@ def organize_slideshow(output_dir, video_id):
         return
     
     # Categorize files
-    images = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.webp', '.png'))]
+    images = [f for f in files if f.lower().endswith(IMAGE_EXTENSIONS)]
     audio = [f for f in files if f.lower().endswith(('.m4a', '.mp3', '.aac'))]
     videos = [f for f in files if f.lower().endswith(('.mp4', '.webm', '.mkv'))]
     
@@ -522,6 +495,7 @@ def ensure_h264(file_path):
                 print(f"[H264] Could not remove temp file: {e}")
 
 VIDEO_EXTENSIONS = ('mp4', 'webm', 'mkv', 'mov')
+IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 
 def find_downloaded_videos(username, video_id, extensions=VIDEO_EXTENSIONS):
     """Returns the non-empty final video files for video_id in the user's directory.
@@ -558,21 +532,8 @@ def download_video(video_url, username, video_id, retries=3, cookies_browser=Non
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    ydl_opts = {
-        'outtmpl': f'{output_dir}/%(upload_date)s_%(id)s.%(ext)s',
-        'format': 'bestvideo[vcodec^=avc1]+bestaudio/best[vcodec^=avc1]/best',
-        'quiet': False,
-        'ignoreerrors': True,
-        'restrictfilenames': True,
-        'writeallthumbnails': True,
-        # Prefer H.264 (avc1) codec for browser compatibility
-        # Falls back to best available, then re-encodes via ffmpeg if needed
-    }
-
-    if cookies_file:
-        ydl_opts['cookiefile'] = cookies_file
-    elif cookies_browser:
-        ydl_opts['cookiesfrombrowser'] = (cookies_browser,)
+    ydl_opts = build_ydl_opts('download', cookies_file, cookies_browser,
+                              outtmpl=f'{output_dir}/%(upload_date)s_%(id)s.%(ext)s')
 
     downloaded = False
     for attempt in range(retries):
@@ -776,10 +737,33 @@ def main():
     print(f"Starting extraction for user: {username} on {args.platform}...")
     if args.force_update:
         print("WARNING: FORCE UPDATE MODE ENABLED: Will scan all videos.")
-    if args.cookies_file:
-        print(f"Using cookies from file: {args.cookies_file}")
-    elif args.cookies_browser:
-        print(f"Using cookies from {args.cookies_browser} browser for authentication")
+    if args.download:
+        # Orchestrateur unique : extraction + détection du type + téléchargement + historique
+        from orchestrator import run_download
+
+        def cli_log(message, level="info"):
+            prefix = {"error": "ERROR: ", "warning": "WARNING: "}.get(level, "")
+            print(f"{prefix}{message}")
+
+        stats = run_download(
+            username, args.platform,
+            min_sleep=args.min_sleep, max_sleep=args.max_sleep, limit=args.limit,
+            force_update=args.force_update,
+            cookies_file=args.cookies_file, cookies_browser=args.cookies_browser,
+            log=cli_log,
+            forward_extraction_logs=False,  # get_video_links affiche déjà ses messages
+        )
+        print("\nDownload Summary:")
+        print(f"   Videos: {stats['videos']}")
+        print(f"   Slideshows: {stats['slideshows']}")
+        print(f"   Total: {stats['downloaded']}")
+        if stats['failed']:
+            print(f"   Failed: {stats['failed']}")
+        if stats['unknown']:
+            print(f"   Unknown type (skipped, retry later): {stats['unknown']}")
+        print(f"   Size: {stats['size_mb']:.1f} MB")
+        print(f"   Duration: {stats['duration_s']:.0f}s")
+        return
 
     videos_generator = get_video_links(username, history, args.platform, args.limit, force_update=args.force_update, cookies_browser=args.cookies_browser, cookies_file=args.cookies_file)
 
@@ -788,85 +772,6 @@ def main():
 
     if videos:
         save_links_to_file(username, videos)
-
-        if args.download:
-            print(f"\nStarting download of {len(videos)} new videos...")
-
-            video_count = 0  # Regular video downloads
-            slideshow_count = 0  # Slideshow downloads
-            unknown_count = 0  # Type could not be determined (retried on next run)
-
-            for i, video in enumerate(videos):
-                video_id = video['id']
-                video_url = video['url']
-
-                # Double check history just in case (though get_video_links handles it)
-                if video_id in history:
-                    continue
-
-                # Detect if it's a slideshow
-                print(f"Checking ({i+1}/{len(videos)}): {video_url}")
-                slideshow_flag = is_slideshow(video_url, username=username, cookies_browser=args.cookies_browser, cookies_file=args.cookies_file)
-                if slideshow_flag is None:
-                    # Type inconnu : signalé en erreur, NON enregistré dans l'historique
-                    # pour être réessayé au prochain lancement
-                    unknown_count += 1
-                    print(f"ERROR: Could not determine type for {video_url} - skipped, will be retried next run.")
-                    continue
-
-                if slideshow_flag:
-                    slideshow_count += 1
-                    print(f"Slideshow detected - downloading with gallery-dl ({slideshow_count} slideshows so far)")
-                    success = download_slideshow(video_url, username, video_id, cookies_browser=args.cookies_browser, cookies_file=args.cookies_file)
-
-                    if success:
-                        # Count images
-                        image_count = 0
-                        user_dir = get_user_dir(username)
-                        for f in os.listdir(user_dir):
-                            if video_id in f and f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                                image_count += 1
-
-                        save_to_history(username, video_id, url=video_url, item_type="slideshow",
-                                      file_size=0, file_count=image_count, success=True)
-                        # Sleep to avoid rate limiting
-                        sleep_time = random.randint(args.min_sleep, args.max_sleep)
-                        print(f"Sleeping for {sleep_time} seconds...")
-                        time.sleep(sleep_time)
-                    else:
-                        save_to_history(username, video_id, url=video_url, item_type="slideshow",
-                                      file_size=0, success=False)
-                        print("Slideshow download failed, marked as failed.")
-                    continue
-
-                video_count += 1
-                print(f"Downloading video ({video_count}): {video_url}")
-                success = download_video(video_url, username, video_id, cookies_browser=args.cookies_browser, cookies_file=args.cookies_file)
-
-                # download_video only returns True when a verified file exists; double check anyway
-                video_files = find_downloaded_videos(username, video_id) if success else []
-
-                if success and video_files:
-                    # Get file size
-                    file_size = os.path.getsize(video_files[0])
-
-                    save_to_history(username, video_id, url=video_url, item_type="video",
-                                  file_size=file_size, success=True)
-                    # Sleep to avoid rate limiting
-                    sleep_time = random.randint(args.min_sleep, args.max_sleep)
-                    print(f"Sleeping for {sleep_time} seconds...")
-                    time.sleep(sleep_time)
-                else:
-                    save_to_history(username, video_id, url=video_url, item_type="video",
-                                  file_size=0, success=False)
-                    print("Download failed, marked as failed.")
-
-            print(f"\nDownload Summary:")
-            print(f"   Videos: {video_count}")
-            print(f"   Slideshows: {slideshow_count}")
-            print(f"   Total: {video_count + slideshow_count}")
-            if unknown_count:
-                print(f"   Unknown type (skipped, retry later): {unknown_count}")
     else:
         print("No new videos found.")
 

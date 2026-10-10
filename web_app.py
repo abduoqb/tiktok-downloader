@@ -1,15 +1,14 @@
 """
 Flask Web Interface for TikTok Scraper
 """
-from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory, Response, stream_with_context
+from flask import Flask, render_template, request, jsonify, send_from_directory, Response, stream_with_context
 import queue
 import os
 import sys
 import json
+import math
 import threading
 import time
-
-import random
 import traceback
 import signal
 import atexit
@@ -24,15 +23,11 @@ from main import (
     get_user_dir,
     load_history,
     get_video_links,
-    download_video,
-    save_to_history,
-    save_links_to_file,
     append_link_to_file,
-    is_slideshow,
-    download_slideshow,
     get_metadata_manager,
-    find_downloaded_videos
 )
+import ytdlp_options
+import orchestrator
 
 app = Flask(__name__)
 
@@ -139,7 +134,7 @@ def emit_log(message, level="info", module="SYSTEM"):
         # Si vraiment tout échoue, on ignore silencieusement
         pass
 
-def emit_stats_header(username, platform, total_videos, already_downloaded, new_videos, slideshows, mode, min_sleep, max_sleep):
+def emit_stats_header(username, platform, total_videos, already_downloaded, new_videos, mode, min_sleep, max_sleep):
     """Affiche les statistiques initiales avant le téléchargement"""
     separator = "=" * 68
 
@@ -153,8 +148,6 @@ def emit_stats_header(username, platform, total_videos, already_downloaded, new_
     emit_log(f"  Vidéos sur le profil:           {total_videos}", "info", "STATS")
     emit_log(f"  Déjà téléchargées:              {already_downloaded}", "info", "STATS")
     emit_log(f"  Nouvelles détectées:            {new_videos}", "info", "STATS")
-    if slideshows > 0:
-        emit_log(f"  Slideshows détectés:            {slideshows}", "info", "STATS")
     emit_log("", "info", "STATS")
 
     emit_log("Configuration:", "info", "STATS")
@@ -353,9 +346,7 @@ def background_extract_task(username, platform, limit):
 
         # Extract links using generator
         # Cookies file for TikTok authentication
-        cookies_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tiktok.com_cookies.txt')
-        if not os.path.exists(cookies_file):
-            cookies_file = None
+        cookies_file = ytdlp_options.default_cookies_file()
 
         video_generator = get_video_links(
             username,
@@ -392,18 +383,47 @@ def background_extract_task(username, platform, limit):
         if username in active_threads:
             del active_threads[username]
 
+def _normalize_sleep(min_sleep, max_sleep, default_min=5.0, default_max=15.0):
+    """Convertit en nombres finis >= 0 (repli 5 / 15), échange si min > max."""
+    def conv(value, default):
+        if value is None or isinstance(value, bool):
+            return default
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return default
+        if not math.isfinite(number) or number < 0:
+            return default
+        return number
+
+    low = conv(min_sleep, default_min)
+    high = conv(max_sleep, default_max)
+    if low > high:
+        low, high = high, low
+    return low, high
+
 @app.route('/api/download', methods=['POST'])
 def start_download():
     """Start a background download task"""
     data = request.json
     username = data.get('username')
     platform = data.get('platform', 'tiktok')
-    min_sleep = data.get('min_sleep', 0)
-    max_sleep = data.get('max_sleep', 0)
+    min_sleep = data.get('min_sleep')
+    max_sleep = data.get('max_sleep')
     force_update = data.get('force_update', False)
+    limit = data.get('limit')
 
     if not username:
         return jsonify({'error': 'Username required'}), 400
+
+    # limit : entier >= 0 ou None ; 0 (« illimité » du formulaire) équivaut à None
+    if limit is not None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            return jsonify({'error': 'limit must be a non-negative integer or null'}), 400
+        if limit == 0:
+            limit = None
+
+    min_sleep, max_sleep = _normalize_sleep(min_sleep, max_sleep)
 
     # Check if thread is actually running (not just status)
     if username in active_threads:
@@ -419,7 +439,7 @@ def start_download():
     # Start background task
     thread = threading.Thread(
         target=background_download_task,
-        args=(username, platform, min_sleep, max_sleep, force_update),
+        args=(username, platform, min_sleep, max_sleep, force_update, limit),
         daemon=True
     )
     thread.start()
@@ -488,7 +508,6 @@ def delete_profile(username):
 @app.route('/api/video/<username>/<filename>/delete', methods=['DELETE'])
 def delete_video(username, filename):
     """Delete a single video and remove its ID from history"""
-    from urllib.parse import unquote
     import re
 
     # Decode URL-encoded characters
@@ -627,16 +646,14 @@ def calculate_total_size():
 
 
 
-def background_download_task(username, platform, min_sleep, max_sleep, force_update=False):
-    """Background task to run the download process."""
+def background_download_task(username, platform, min_sleep, max_sleep, force_update=False, limit=None):
+    """Background task: mince adaptateur autour de orchestrator.run_download."""
     global active_tasks
     active_tasks[username] = "running"
-    start_time = time.time()
 
     # Cookies file for TikTok authentication
-    cookies_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tiktok.com_cookies.txt')
-    if not os.path.exists(cookies_file):
-        cookies_file = None
+    cookies_file = ytdlp_options.default_cookies_file()
+    if not cookies_file:
         emit_log("⚠ Fichier cookies non trouvé, téléchargement sans authentification", "warning", "SYSTEM")
 
     try:
@@ -645,213 +662,68 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
             emit_log("Arrêt demandé, téléchargement annulé", "warning", "DOWNLOAD")
             return
 
-        emit_log(f"Analyse du profil @{username}...", "info", "SCAN")
+        try:
+            history_count = len(load_history(username))
+        except Exception:
+            history_count = 0
 
-        # Ensure user directory exists
-        user_dir = get_user_dir(username)
-        if not os.path.exists(user_dir):
-            os.makedirs(user_dir)
+        def log(msg, level="info"):
+            emit_log(msg, level, "DOWNLOAD")
 
-        # Load history
-        history = load_history(username)
+        def should_stop():
+            return active_tasks.get(username) == "stopping" or shutdown_event.is_set()
 
-        if force_update:
-            emit_log("Mode MAJ forcée activé", "warning", "SCAN")
+        state = {"total": 0, "ok": 0, "last_progress": time.time()}
 
-        # Define a callback for logging from main.py (silenced)
-        def log_callback(msg, level="info"):
-            pass  # On ne veut pas les logs intermédiaires de main.py
+        def progress(event, data):
+            if event == "extraction_done":
+                state["total"] = data["total"]
+                if data["total"] > 0:
+                    mode_text = "Incrémental (seuil: 10 doublons)" if not force_update else "MAJ forcée (toutes les vidéos)"
+                    emit_stats_header(
+                        username=username,
+                        platform=platform.upper(),
+                        total_videos=history_count + data["total"],  # Approximation
+                        already_downloaded=history_count,
+                        new_videos=data["total"],
+                        mode=mode_text,
+                        min_sleep=min_sleep,
+                        max_sleep=max_sleep
+                    )
+                    emit_log("", "info", "DOWNLOAD")
+            elif event == "item_done":
+                if data.get("success"):
+                    state["ok"] += 1
+                    now = time.time()
+                    # Barre de progression au plus toutes les 60 s
+                    if now - state["last_progress"] >= 60:
+                        emit_progress_bar(state["ok"], data.get("total", state["total"]),
+                                          data.get("elapsed_s", 0), data.get("total_size_mb", 0.0))
+                        state["last_progress"] = now
 
-        # 1. Extract Links
-        videos_raw = []
-        video_generator = get_video_links(
-            username,
-            history,
-            platform,
-            limit=None,
-            callback_log=log_callback,
-            force_update=force_update,
-            cookies_file=cookies_file
+        stats = orchestrator.run_download(
+            username, platform,
+            min_sleep=min_sleep, max_sleep=max_sleep, limit=limit,
+            force_update=force_update, cookies_file=cookies_file,
+            log=log, progress=progress, should_stop=should_stop,
         )
 
-        for video in video_generator:
-            # Vérifier si shutdown demandé
-            if shutdown_event.is_set():
-                emit_log("Arrêt demandé pendant l'extraction", "warning", "SCAN")
-                return
-            videos_raw.append(video)
+        downloaded_videos = stats["videos"]
+        downloaded_slideshows = stats["slideshows"]
+        failed_count = stats["failed"]
+        unknown_count = stats["unknown"]
+        total_size_mb = stats["size_mb"]
+        total_time = stats["duration_s"]
+        total_downloaded = stats["downloaded"]
+        processed = stats["processed"]
 
-        if not videos_raw:
-            emit_log("Aucune nouvelle vidéo trouvée", "warning", "SCAN")
-            active_tasks[username] = "done"
-            if username in active_threads:
-                del active_threads[username]
-            return
+        if processed == 0 and unknown_count == 0:
+            return  # rien traité : l'orchestrateur a déjà loggé la raison
 
-        emit_log("Analyse terminée", "success", "SCAN")
-        emit_log("", "info", "SCAN")  # Ligne vide
-
-        # 2. Categorize videos and slideshows (with caching for performance)
-        items_to_download = []
-        slideshow_count = 0
-        video_count = 0
-        unknown_count = 0
-
-        for video in videos_raw:
-            # Use cached is_slideshow for performance
-            slideshow_flag = is_slideshow(video['url'], username=username, cookies_file=cookies_file)
-            if slideshow_flag is None:
-                # Type inconnu (cookies expirés, 403, réseau...) : signalé en erreur,
-                # NON enregistré dans l'historique pour être réessayé au prochain lancement
-                unknown_count += 1
-                emit_log(f"Type inconnu pour {video['id']} (cookies/réseau ?) - ignoré, réessai au prochain lancement", "error", "SCAN")
-                continue
-            item_type = 'slideshow' if slideshow_flag else 'video'
-            items_to_download.append({
-                'url': video['url'],
-                'id': video['id'],
-                'type': item_type
-            })
-            if item_type == 'slideshow':
-                slideshow_count += 1
-            else:
-                video_count += 1
-
-        # Si rien à télécharger
-        if not items_to_download:
-            emit_log("Aucune vidéo ou slideshow à télécharger", "warning", "SCAN")
-            active_tasks[username] = "done"
-            if username in active_threads:
-                del active_threads[username]
-            return
-
-        save_links_to_file(username, videos_raw)  # Save all links including slideshows
-
-        # 3. Display initial statistics
-        total_videos_on_profile = len(history) + len(videos_raw)  # Approximation
-        mode_text = "Incrémental (seuil: 10 doublons)" if not force_update else "MAJ forcée (toutes les vidéos)"
-
-        emit_stats_header(
-            username=username,
-            platform=platform.upper(),
-            total_videos=total_videos_on_profile,
-            already_downloaded=len(history),
-            new_videos=video_count,
-            slideshows=slideshow_count,
-            mode=mode_text,
-            min_sleep=min_sleep,
-            max_sleep=max_sleep
-        )
-        emit_log("", "info", "DOWNLOAD")  # Ligne vide
-        emit_log(f"Démarrage du téléchargement", "info", "DOWNLOAD")
-        emit_log("", "info", "DOWNLOAD")  # Ligne vide
-
-        # 4. Download Videos and Slideshows with progress bar
-        downloaded_videos = 0
-        downloaded_slideshows = 0
-        total_size_mb = 0.0
-        last_progress_time = time.time()  # Pour afficher la barre toutes les minutes
-
-        for i, item in enumerate(items_to_download):
-            # Vérifier si arrêt demandé (via API ou shutdown serveur)
-            if active_tasks.get(username) == "stopping" or shutdown_event.is_set():
-                emit_log(f"Arrêt demandé pour @{username}", "warning", "SYSTEM")
-                break
-
-            item_id = item['id']
-            item_url = item['url']
-            item_type = item['type']
-
-            # Double check history
-            if item_id in history and not force_update:
-                continue
-
-            # Pause anti-spam (sauf pour le premier item)
-            if i > 0:
-                sleep_time = random.uniform(min_sleep, max_sleep)
-                emit_log(f"Pause: {int(sleep_time)} secondes", "info", "SYSTEM")
-                time.sleep(sleep_time)
-
-            # Téléchargement selon le type
-            download_start = time.time()
-
-            if item_type == 'slideshow':
-                emit_log(f"[{i+1}/{len(items_to_download)}] Slideshow en cours...", "info", "DOWNLOAD")
-                success = download_slideshow(item_url, username, item_id, cookies_file=cookies_file)
-            else:
-                emit_log(f"[{i+1}/{len(items_to_download)}] Vidéo en cours...", "info", "DOWNLOAD")
-                success = download_video(item_url, username, item_id, cookies_file=cookies_file)
-
-            download_duration = time.time() - download_start
-
-            # Vidéo : un fichier vérifié est obligatoire avant d'enregistrer un succès
-            video_files = []
-            if success and item_type != 'slideshow':
-                video_files = find_downloaded_videos(username, item_id)
-                if not video_files:
-                    success = False
-
-            if success:
-                if item_type == 'slideshow':
-                    downloaded_slideshows += 1
-                    # Count images in slideshow
-                    image_count = 0
-                    for f in os.listdir(user_dir):
-                        if item_id in f and f.endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                            image_count += 1
-                    emit_log(f"[{i+1}/{len(items_to_download)}] Slideshow ({image_count} images) ({download_duration:.1f}s)", "success", "DOWNLOAD")
-
-                    # Save to history with metadata
-                    save_to_history(username, item_id, url=item_url, item_type="slideshow",
-                                  file_size=0, file_count=image_count, success=True)
-                else:
-                    downloaded_videos += 1
-                    # Trouver le fichier téléchargé pour obtenir sa taille
-                    file_size = 0
-                    try:
-                        found_file = video_files[0] if video_files else None
-
-                        if found_file:
-                            file_size = os.path.getsize(found_file)
-                            file_size_mb = file_size / (1024 * 1024)
-                            total_size_mb += file_size_mb
-                            emit_log(f"[{i+1}/{len(items_to_download)}] {os.path.basename(found_file)} ({download_duration:.1f}s)", "success", "DOWNLOAD")
-
-
-                        else:
-                            emit_log(f"[{i+1}/{len(items_to_download)}] Téléchargée ({download_duration:.1f}s)", "success", "DOWNLOAD")
-
-                    except Exception as e:
-                        emit_log(f"Erreur post-traitement: {e}", "error", "SYSTEM")
-
-                    # Save to history with metadata
-                    save_to_history(username, item_id, url=item_url, item_type="video",
-                                  file_size=file_size, success=True)
-
-                # Afficher la barre de progression toutes les minutes
-                current_time = time.time()
-                elapsed = current_time - start_time
-
-                # Afficher si 60 secondes se sont écoulées depuis le dernier affichage
-                if current_time - last_progress_time >= 60:
-                    total_downloaded = downloaded_videos + downloaded_slideshows
-                    emit_progress_bar(total_downloaded, len(items_to_download), elapsed, total_size_mb)
-                    last_progress_time = current_time
-
-            else:
-                # Mark as failed in history
-                save_to_history(username, item_id, url=item_url, item_type=item_type,
-                              file_size=0, success=False)
-                item_type_label = "slideshow" if item_type == 'slideshow' else "vidéo"
-                emit_log(f"[{i+1}/{len(items_to_download)}] Échec du téléchargement ({item_type_label})", "error", "DOWNLOAD")
-
-        # Afficher la barre finale (100%)
-        total_time = time.time() - start_time
-        total_downloaded = downloaded_videos + downloaded_slideshows
+        # Barre finale
         if total_downloaded > 0:
-            emit_progress_bar(total_downloaded, len(items_to_download), total_time, total_size_mb)
+            emit_progress_bar(total_downloaded, processed, total_time, total_size_mb)
 
-        # Final summary
         minutes = int(total_time // 60)
         seconds = int(total_time % 60)
 
@@ -863,12 +735,10 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         emit_log("", "info", "SUMMARY")
 
         emit_log("Téléchargement:", "info", "SUMMARY")
-        total_downloaded = downloaded_videos + downloaded_slideshows
-        success_rate = (total_downloaded / len(items_to_download) * 100) if len(items_to_download) > 0 else 0
-        emit_log(f"  Succès:                         {total_downloaded}/{len(items_to_download)} ({success_rate:.0f}%)", "info", "SUMMARY")
+        success_rate = (total_downloaded / processed * 100) if processed > 0 else 0
+        emit_log(f"  Succès:                         {total_downloaded}/{processed} ({success_rate:.0f}%)", "info", "SUMMARY")
         emit_log(f"    - Vidéos:                     {downloaded_videos}", "info", "SUMMARY")
         emit_log(f"    - Slideshows:                 {downloaded_slideshows}", "info", "SUMMARY")
-        failed_count = len(items_to_download) - total_downloaded
         emit_log(f"  Échecs:                         {failed_count}", "info", "SUMMARY")
         if unknown_count:
             emit_log(f"  Type inconnu (réessai prévu):   {unknown_count}", "error", "SUMMARY")
@@ -879,12 +749,11 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
             emit_log(f"  Vitesse moyenne:                {avg_speed:.1f} MB/min", "info", "SUMMARY")
         emit_log("", "info", "SUMMARY")
 
-
-
         emit_log("Stockage:", "info", "SUMMARY")
         emit_log(f"  Dossier:                        downloads/{username}/", "info", "SUMMARY")
 
         # Calculer l'espace total utilisé
+        user_dir = get_user_dir(username)
         total_dir_size = 0
         if os.path.exists(user_dir):
             for f in os.listdir(user_dir):
@@ -908,6 +777,6 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
 
 if __name__ == '__main__':
     from preflight import check_environment
-    for problem in check_environment('tiktok.com_cookies.txt'):
+    for problem in check_environment(ytdlp_options.default_cookies_file()):
         print(f"[preflight] {problem}")
     app.run(debug=True, host='0.0.0.0', port=5001)
