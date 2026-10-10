@@ -1,134 +1,95 @@
 {% extends "base.html" %}
 
-{% block title %}{{ profile.username }} - Détails{% endblock %}
+{% block title %}@{{ profile.username }} - TikTok Scraper{% endblock %}
+
+{% block extra_head %}
+<style>
+    .stat-val { font-size: 28px; font-weight: 800; line-height: 1.1; }
+    .seg { display: inline-flex; border: 2px solid var(--line2); }
+    .seg button { padding: 7px 14px; font-weight: 700; font-size: 14px; color: var(--dim); background: transparent; cursor: pointer; }
+    .seg button:hover { color: var(--ink); background: var(--panel2); }
+    .seg button[aria-pressed="true"] { background: var(--violet-fill); color: #0b0b10; }
+    .thumb-actions { opacity: 1; }
+    @media (hover: hover) and (min-width: 768px) {
+        .thumb-actions { opacity: 0; transition: opacity .15s; }
+        .video-card:hover .thumb-actions, .video-card:focus-within .thumb-actions { opacity: 1; }
+    }
+    .icon-chip {
+        display: inline-flex; padding: 8px; background: rgba(7,7,11,.88); color: var(--ink);
+        border: 2px solid var(--line2); cursor: pointer;
+    }
+    .icon-chip:hover { border-color: var(--ink); }
+    .icon-chip.danger:hover { border-color: var(--rose); color: var(--rose); }
+</style>
+{% endblock %}
 
 {% block nav_content %}
-    <div class="flex items-center justify-between w-full">
-        <div class="flex items-center gap-4">
-            <a href="/" class="group inline-flex items-center px-3 py-2 border border-cyber-border text-sm font-medium rounded-none text-slate-400 hover:text-white hover:bg-white/5 transition">
-                <svg class="w-5 h-5 mr-1 text-slate-500 group-hover:text-white transition" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                </svg>
-                RETOUR
+    <div class="flex items-center justify-between w-full gap-3 flex-wrap py-2">
+        <div class="flex items-center gap-4 min-w-0">
+            <a href="/" class="btn btn-sm">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+                Accueil
             </a>
-            <div class="h-6 w-px bg-cyber-border"></div>
-            <a href="https://www.tiktok.com/@{{ profile.username }}" target="_blank" rel="noopener noreferrer" class="group inline-flex items-center gap-2 hover:text-cyber-purple transition-colors">
-                <h1 class="text-xl font-bold tracking-tight text-white font-mono group-hover:text-cyber-purple transition-colors">@{{ profile.username }}</h1>
-                <svg class="w-4 h-4 text-slate-500 group-hover:text-cyber-purple transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
+            <a href="https://www.tiktok.com/@{{ profile.username }}" target="_blank" rel="noopener noreferrer" class="group inline-flex items-center gap-2 min-w-0 no-underline" title="Ouvrir le profil sur TikTok">
+                <h1 class="text-lg sm:text-xl font-extrabold tracking-tight text-ink truncate group-hover:text-violet">@{{ profile.username }}</h1>
+                <svg class="w-4 h-4 shrink-0 text-mute group-hover:text-violet" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
             </a>
         </div>
-        
+
         <div class="flex items-center gap-3">
-            <button onclick="syncProfile()" class="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-bold rounded-none shadow-sm text-white bg-cyber-purple hover:bg-purple-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition tracking-wide uppercase font-mono">
-                <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Mise à jour
-            </button>
-            
-            <div class="flex items-center bg-cyber-bg border border-cyber-border p-1">
-                <button onclick="switchView('grid')" id="gridViewBtn" class="p-1.5 bg-cyber-card text-cyber-purple shadow-sm transition">
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                    </svg>
-                </button>
-                <button onclick="switchView('list')" id="listViewBtn" class="p-1.5 text-slate-500 hover:text-white transition">
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-                    </svg>
-                </button>
+            <div class="seg" role="group" aria-label="Affichage des vidéos">
+                <button type="button" onclick="switchView('grid')" id="gridViewBtn" aria-pressed="true">Grille</button>
+                <button type="button" onclick="switchView('list')" id="listViewBtn" aria-pressed="false">Liste</button>
             </div>
+            <button type="button" onclick="syncProfile()" id="syncBtn" class="btn btn-primary btn-sm">Mettre à jour</button>
         </div>
     </div>
 {% endblock %}
 
 {% block content %}
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        <div class="bg-cyber-card rounded-none border border-cyber-border p-5 relative group hover:border-cyber-purple/50 transition-colors">
-            <div class="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyber-purple"></div>
-            <div class="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-cyber-purple"></div>
-            <div class="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-cyber-purple"></div>
-            <div class="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyber-purple"></div>
-            <dt class="truncate text-xs font-bold text-slate-500 uppercase tracking-wider font-mono">Historique détecté</dt>
-            <dd class="mt-1 text-3xl font-bold tracking-tight text-white font-mono">{{ profile.video_count }}</dd>
+    <section aria-label="Statistiques du profil" class="flex flex-wrap gap-x-12 gap-y-4">
+        <div>
+            <div class="stat-val text-ink">{{ profile.video_count }}</div>
+            <div class="text-mute text-sm">vidéos connues dans l'historique</div>
         </div>
-        <div class="bg-cyber-card rounded-none border border-cyber-border p-5 relative group hover:border-cyber-green/50 transition-colors">
-            <div class="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyber-green"></div>
-            <div class="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-cyber-green"></div>
-            <div class="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-cyber-green"></div>
-            <div class="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyber-green"></div>
-            <dt class="truncate text-xs font-bold text-slate-500 uppercase tracking-wider font-mono">Fichiers locaux</dt>
-            <dd class="mt-1 text-3xl font-bold tracking-tight text-cyber-green font-mono">{{ profile.downloaded_count }}</dd>
+        <div>
+            <div class="stat-val text-lime">{{ profile.downloaded_count }}</div>
+            <div class="text-mute text-sm">fichiers sur le disque</div>
         </div>
-        <div class="bg-cyber-card rounded-none border border-cyber-border p-5 relative group hover:border-cyber-orange/50 transition-colors">
-            <div class="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyber-orange"></div>
-            <div class="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-cyber-orange"></div>
-            <div class="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-cyber-orange"></div>
-            <div class="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyber-orange"></div>
-            <dt class="truncate text-xs font-bold text-slate-500 uppercase tracking-wider font-mono">Stockage utilisé</dt>
-            <dd class="mt-1 text-3xl font-bold tracking-tight text-white font-mono">
-                {{ "%.2f"|format(profile.videos|sum(attribute='size')|default(0) / (1024**3)) }} <span class="text-lg text-slate-500 font-normal">GB</span>
-            </dd>
+        <div>
+            <div class="stat-val text-amber">{{ "%.2f"|format(profile.videos|sum(attribute='size')|default(0) / (1024**3)) }} Go</div>
+            <div class="text-mute text-sm">d'espace utilisé</div>
         </div>
-    </div>
+    </section>
 
-    <div id="syncMessage" class="hidden border border-cyber-border bg-cyber-bg p-4 text-sm font-mono animate-fade-in text-white mb-6"></div>
+    <div id="syncMessage" role="status" aria-live="polite" class="hidden border-2 bg-panel2 p-4 text-sm font-bold"></div>
 
     <div id="videosContainer">
         {% if profile.videos %}
-            
-            <div id="listView" class="hidden bg-cyber-card border border-cyber-border overflow-hidden">
-                <ul class="divide-y divide-cyber-border">
+
+            <div id="listView" class="hidden panel overflow-hidden">
+                <ul class="divide-y divide-line">
                     {% for video in profile.videos %}
-                    <li class="hover:bg-white/5 transition-colors group">
+                    <li class="hover:bg-panel2 transition-colors">
                         <div class="px-4 py-4 sm:px-6">
-                            <div class="flex items-center justify-between">
-                                <div class="flex-1 min-w-0 pr-4">
-                                    <p class="text-sm font-bold text-cyber-purple truncate font-mono">{{ video.filename }}</p>
-                                    <div class="mt-1 flex items-center text-xs text-slate-500 gap-3 font-mono">
-                                        <span class="flex items-center">
-                                            <svg class="flex-shrink-0 mr-1.5 h-4 w-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                            </svg>
-                                            {{ video.date }}
-                                        </span>
-                                        <span class="flex items-center">
-                                            <svg class="flex-shrink-0 mr-1.5 h-4 w-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-                                            </svg>
-                                            {{ video.size_mb }} MB
-                                        </span>
-                                    </div>
+                            <div class="flex flex-wrap items-center justify-between gap-3">
+                                <div class="flex-1 min-w-0">
+                                    <p class="font-bold text-ink truncate">{{ video.filename }}</p>
+                                    <p class="mt-0.5 text-sm text-mute">{{ video.date }} · {{ video.size_mb }} Mo</p>
                                 </div>
-                                
+
                                 <div class="flex items-center gap-2">
-                                    <button onclick="toggleVideoInList(this)" class="p-2 text-slate-500 hover:text-cyber-purple bg-cyber-bg border border-cyber-border hover:border-cyber-purple transition" title="Lire">
-                                        <svg class="w-4 h-4 play-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
-                                        <svg class="w-4 h-4 pause-icon hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
+                                    <button type="button" onclick="toggleVideoInList(this)" class="btn btn-sm btn-go" aria-expanded="false">
+                                        <span class="play-label">Lire</span>
                                     </button>
-                                    
-                                    <a href="/video/{{ profile.username }}/{{ video.filename }}" download="{{ video.filename }}" class="p-2 text-slate-500 hover:text-white bg-cyber-bg border border-cyber-border hover:border-white transition" title="Télécharger">
-                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                                        </svg>
-                                    </a>
-                                    
-                                    <button onclick="deleteVideo('{{ video.filename }}')" class="p-2 text-slate-500 hover:text-red-500 bg-cyber-bg border border-cyber-border hover:border-red-500 transition" title="Supprimer">
-                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                        </svg>
+                                    <a href="/video/{{ profile.username }}/{{ video.filename }}" download="{{ video.filename }}" class="btn btn-sm">Enregistrer</a>
+                                    <button type="button" onclick="deleteVideo('{{ video.filename }}')" class="btn btn-sm btn-danger btn-icon" aria-label="Supprimer {{ video.filename }}" title="Supprimer cette vidéo">
+                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                     </button>
                                 </div>
                             </div>
-                            
-                            <div class="video-player-container hidden mt-4 bg-black border border-cyber-border">
+
+                            <div class="video-player-container hidden mt-4 bg-black border border-line">
                                 <video class="lazy-video w-full max-h-[60vh] mx-auto" controls preload="none" data-src="/video/{{ profile.username }}/{{ video.filename }}"></video>
                             </div>
                         </div>
@@ -137,106 +98,92 @@
                 </ul>
             </div>
 
-            <div id="galleryView" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            <div id="galleryView" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                 {% for video in profile.videos %}
-                <div class="group relative bg-cyber-card border border-cyber-border hover:border-cyber-purple/50 transition overflow-hidden">
-                    <div class="aspect-[9/16] bg-black relative group-hover:opacity-100 transition">
-                        <video 
-                            class="lazy-video video-player w-full h-full object-contain cursor-pointer" 
-                            data-src="/video/{{ profile.username }}/{{ video.filename }}" 
-                            preload="none" 
+                <div class="video-card group relative bg-panel border border-line hover:border-violet transition-colors overflow-hidden">
+                    <div class="aspect-[9/16] bg-black relative">
+                        <video
+                            class="lazy-video video-player w-full h-full object-contain cursor-pointer"
+                            data-src="/video/{{ profile.username }}/{{ video.filename }}"
+                            preload="none"
                             onclick="togglePlay(this)"
                             data-filename="{{ video.filename }}"
                         ></video>
-                        
+
                         <div class="absolute inset-0 flex items-center justify-center pointer-events-none play-overlay">
-                            <div class="w-12 h-12 rounded-full bg-cyber-purple/20 border border-cyber-purple/50 flex items-center justify-center backdrop-blur-sm">
-                                <svg class="w-6 h-6 text-cyber-purple ml-1" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                            <div class="w-14 h-14 rounded-full bg-violet-fill flex items-center justify-center shadow-[4px_4px_0_0_rgba(0,0,0,.6)]">
+                                <svg class="w-7 h-7 text-black ml-1" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
                             </div>
                         </div>
 
-                        <div class="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                            <a href="/video/{{ profile.username }}/{{ video.filename }}" download="{{ video.filename }}" onclick="event.stopPropagation()" class="p-2 bg-black/80 backdrop-blur text-slate-300 border border-cyber-border hover:text-white hover:border-white rounded-full transition" title="Télécharger">
-                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                        <div class="thumb-actions absolute top-2 right-2 flex flex-col gap-2">
+                            <a href="/video/{{ profile.username }}/{{ video.filename }}" download="{{ video.filename }}" onclick="event.stopPropagation()" class="icon-chip" aria-label="Enregistrer {{ video.filename }}" title="Enregistrer la vidéo">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                             </a>
-                            <button onclick="event.stopPropagation(); deleteVideo('{{ video.filename }}')" class="p-2 bg-black/80 backdrop-blur text-slate-300 border border-cyber-border hover:text-red-500 hover:border-red-500 rounded-full transition" title="Supprimer">
-                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            <button type="button" onclick="event.stopPropagation(); deleteVideo('{{ video.filename }}')" class="icon-chip danger" aria-label="Supprimer {{ video.filename }}" title="Supprimer cette vidéo">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                             </button>
                         </div>
                     </div>
 
-                    <div class="p-3 border-t border-cyber-border bg-cyber-card">
-                        <div class="flex justify-between items-start">
-                            <div class="min-w-0">
-                                <p class="text-xs font-bold text-white truncate font-mono" title="{{ video.filename }}">{{ video.filename }}</p>
-                                <p class="text-[10px] text-slate-500 mt-0.5 font-mono">{{ video.date.split(' ')[0] }} • {{ video.size_mb }} MB</p>
-                            </div>
-                        </div>
+                    <div class="px-3 py-2 border-t border-line">
+                        <p class="text-sm font-bold text-ink">{{ video.date.split(' ')[0] }}</p>
+                        <p class="text-xs text-mute truncate" title="{{ video.filename }}">{{ video.size_mb }} Mo</p>
                     </div>
                 </div>
                 {% endfor %}
             </div>
 
         {% else %}
-            <div class="flex flex-col items-center justify-center py-12 bg-cyber-card border border-cyber-border border-dashed transition-colors duration-200">
-                <svg class="h-12 w-12 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-                <h3 class="mt-2 text-sm font-bold text-white font-mono">AUCUNE VIDÉO</h3>
-                <p class="mt-1 text-sm text-slate-500 font-mono">Utilisez "MISE À JOUR" pour scanner.</p>
+            <div class="panel px-6 py-14 text-center">
+                <p class="text-ink font-bold text-lg">Aucune vidéo téléchargée pour ce profil</p>
+                <p class="text-dim mt-1">Cliquez sur « Mettre à jour » pour récupérer les vidéos de @{{ profile.username }}.</p>
             </div>
         {% endif %}
     </div>
+
+    <div id="toastBox" class="sr-only" role="status" aria-live="polite"></div>
 {% endblock %}
 
 {% block scripts %}
     <script>
-        let viewMode = 'grid';
-
-        // --- UI Helpers ---
+        // --- Message d'état ---
         function showNotification(text, type) {
-            // Ne rien afficher si pas de texte
-            if (!text || text === 'undefined' || text === 'null') {
-                return;
-            }
-
+            if (!text || text === 'undefined' || text === 'null') return;
             const div = document.getElementById('syncMessage');
-            div.className = 'border border-cyber-border bg-cyber-bg p-4 text-sm font-mono animate-fade-in text-white mb-6';
-
-            if (type === 'success') div.classList.add('border-cyber-green', 'text-cyber-green');
-            else if (type === 'error') div.classList.add('border-red-500', 'text-red-500');
-            else div.classList.add('border-cyber-purple', 'text-cyber-purple');
-
+            const colors = { success: 'var(--lime)', error: 'var(--rose)', info: 'var(--violet)' };
+            const c = colors[type] || colors.info;
+            div.style.borderColor = c;
+            div.style.color = (type === 'info') ? 'var(--ink)' : c;
             div.textContent = text;
             div.classList.remove('hidden');
+            div.classList.add('pop-in');
         }
 
+        // --- État de la connexion au serveur ---
+        function setConn(ok) {
+            document.getElementById('connDot') && (document.getElementById('connDot').className = 'w-2.5 h-2.5 rounded-full ' + (ok ? 'bg-lime' : 'bg-rose'));
+        }
+
+        // --- Affichage grille / liste ---
         function switchView(mode) {
-            viewMode = mode;
             const listView = document.getElementById('listView');
             const gridView = document.getElementById('galleryView');
-            const listBtn = document.getElementById('listViewBtn');
-            const gridBtn = document.getElementById('gridViewBtn');
-
-            // Pause videos on switch
+            if (!listView || !gridView) return;
             document.querySelectorAll('video').forEach(v => v.pause());
-
-            if (mode === 'list') {
-                listView.classList.remove('hidden');
-                gridView.classList.add('hidden');
-                listBtn.className = 'p-1.5 bg-cyber-card text-cyber-purple shadow-sm transition';
-                gridBtn.className = 'p-1.5 text-slate-500 hover:text-white transition';
-            } else {
-                listView.classList.add('hidden');
-                gridView.classList.remove('hidden');
-                gridBtn.className = 'p-1.5 bg-cyber-card text-cyber-purple shadow-sm transition';
-                listBtn.className = 'p-1.5 text-slate-500 hover:text-white transition';
-            }
+            const isList = mode === 'list';
+            listView.classList.toggle('hidden', !isList);
+            gridView.classList.toggle('hidden', isList);
+            document.getElementById('listViewBtn').setAttribute('aria-pressed', String(isList));
+            document.getElementById('gridViewBtn').setAttribute('aria-pressed', String(!isList));
+            try { localStorage.setItem('profileView', mode); } catch (e) {}
         }
 
         // --- Actions ---
         async function syncProfile() {
-            showNotification('Mise à jour en cours...', 'info');
+            const btn = document.getElementById('syncBtn');
+            btn.disabled = true;
+            showNotification('Mise à jour démarrée. Suivez la progression depuis l\'accueil (journal en direct).', 'info');
             try {
                 const response = await fetch('/api/download', {
                     method: 'POST',
@@ -250,117 +197,99 @@
                 });
                 const data = await response.json();
                 if (response.ok && (data.success || data.status === 'started')) {
-                    showNotification('Mise à jour démarrée ! Rechargement...', 'success');
-                    setTimeout(() => location.reload(), 3000);
+                    showNotification('Mise à jour démarrée. Les nouvelles vidéos apparaîtront ici : rechargez la page dans quelques minutes.', 'success');
                 } else {
-                    showNotification('Erreur: ' + (data.error || 'Inconnue'), 'error');
+                    showNotification(data.error || 'Le serveur a refusé la demande.', 'error');
                 }
             } catch (error) {
-                showNotification('Erreur système: ' + error.message, 'error');
+                showNotification('Serveur injoignable : ' + error.message, 'error');
+            } finally {
+                btn.disabled = false;
             }
         }
 
         async function deleteVideo(filename) {
-            if (!confirm(`Supprimer définitivement ${filename} ?`)) return;
+            if (!confirm('Supprimer définitivement ' + filename + ' ?')) return;
             try {
-                const response = await fetch(`/api/video/{{ profile.username }}/${encodeURIComponent(filename)}/delete`, { method: 'DELETE' });
+                const response = await fetch('/api/video/{{ profile.username }}/' + encodeURIComponent(filename) + '/delete', { method: 'DELETE' });
                 const data = await response.json();
                 if (data.success) {
                     location.reload();
                 } else {
-                    alert('Erreur: ' + data.error);
+                    showNotification(data.error || 'Suppression impossible.', 'error');
                 }
             } catch (error) {
-                alert('Erreur: ' + error.message);
+                showNotification('Erreur : ' + error.message, 'error');
             }
         }
 
-        // --- Video Logic ---
+        // --- Lecture ---
+        function setOverlay(video, visible) {
+            const overlay = video.parentElement.querySelector('.play-overlay');
+            if (overlay) overlay.style.display = visible ? 'flex' : 'none';
+        }
+
         function togglePlay(video) {
             const isPlaying = !video.paused;
-            document.querySelectorAll('video').forEach(v => { if(v !== video) v.pause(); });
-            
-            if (isPlaying) video.pause();
-            else video.play();
-            
-            const overlay = video.parentElement.querySelector('.play-overlay');
-            if(overlay) overlay.style.display = video.paused ? 'flex' : 'none';
+            document.querySelectorAll('video').forEach(v => { if (v !== video) v.pause(); });
+            if (isPlaying) video.pause(); else video.play();
+        }
+
+        function resetListButtons() {
+            document.querySelectorAll('#listView button[aria-expanded]').forEach(b => {
+                b.setAttribute('aria-expanded', 'false');
+                b.querySelector('.play-label').textContent = 'Lire';
+            });
         }
 
         function toggleVideoInList(btn) {
             const li = btn.closest('li');
             const container = li.querySelector('.video-player-container');
             const video = container.querySelector('video');
-            const playIcon = btn.querySelector('.play-icon');
-            const pauseIcon = btn.querySelector('.pause-icon');
+            const opening = container.classList.contains('hidden');
 
-            if (container.classList.contains('hidden')) {
-                document.querySelectorAll('.video-player-container').forEach(c => {
-                    c.classList.add('hidden'); 
-                    c.querySelector('video').pause();
-                });
-                document.querySelectorAll('.pause-icon').forEach(i => i.classList.add('hidden'));
-                document.querySelectorAll('.play-icon').forEach(i => i.classList.remove('hidden'));
+            document.querySelectorAll('.video-player-container').forEach(c => {
+                c.classList.add('hidden');
+                c.querySelector('video').pause();
+            });
+            resetListButtons();
 
+            if (opening) {
                 container.classList.remove('hidden');
                 video.play();
-                playIcon.classList.add('hidden');
-                pauseIcon.classList.remove('hidden');
-            } else {
-                container.classList.add('hidden');
-                video.pause();
-                playIcon.classList.remove('hidden');
-                pauseIcon.classList.add('hidden');
+                btn.setAttribute('aria-expanded', 'true');
+                btn.querySelector('.play-label').textContent = 'Fermer';
             }
         }
 
-        // --- Lazy Loading with IntersectionObserver ---
+        // --- Chargement différé des vidéos ---
         function initLazyLoading() {
-            const observer = new IntersectionObserver((entries, observer) => {
+            const observer = new IntersectionObserver((entries, obs) => {
                 entries.forEach(entry => {
                     if (entry.isIntersecting) {
                         const video = entry.target;
-                        
                         if (video.dataset.src) {
                             video.src = video.dataset.src;
                             video.load();
-                            
                             video.classList.remove('lazy-video');
-                            observer.unobserve(video);
+                            obs.unobserve(video);
                         }
                     }
                 });
-            }, {
-                rootMargin: "200px"
-            });
-
-            document.querySelectorAll('.lazy-video').forEach(video => {
-                observer.observe(video);
-            });
+            }, { rootMargin: '200px' });
+            document.querySelectorAll('.lazy-video').forEach(v => observer.observe(v));
         }
 
-        // Auto-handle grid overlays on play/pause events
         document.addEventListener('DOMContentLoaded', () => {
-            // Initialize lazy loading
             initLazyLoading();
-            
+            try { if (localStorage.getItem('profileView') === 'list') switchView('list'); } catch (e) {}
+
             document.querySelectorAll('video').forEach(v => {
-                v.addEventListener('play', () => {
-                    const overlay = v.parentElement.querySelector('.play-overlay');
-                    if(overlay) overlay.style.display = 'none';
-                });
-                v.addEventListener('pause', () => {
-                    const overlay = v.parentElement.querySelector('.play-overlay');
-                    if(overlay) overlay.style.display = 'flex';
-                });
+                v.addEventListener('play', () => setOverlay(v, false));
+                v.addEventListener('pause', () => setOverlay(v, true));
                 v.addEventListener('ended', () => {
-                    const overlay = v.parentElement.querySelector('.play-overlay');
-                    if(overlay) overlay.style.display = 'flex';
-                    const li = v.closest('li');
-                    if(li) {
-                        li.querySelector('.play-icon').classList.remove('hidden');
-                        li.querySelector('.pause-icon').classList.add('hidden');
-                    }
+                    setOverlay(v, true);
+                    if (v.closest('#listView')) resetListButtons();
                 });
             });
         });

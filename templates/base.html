@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}VIP Scraper{% endblock %}</title>
+    <title>{% block title %}TikTok Scraper{% endblock %}</title>
+    <link rel="icon" href="data:,">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -13,58 +14,130 @@
                 extend: {
                     fontFamily: {
                         mono: ['"JetBrains Mono"', 'monospace'],
-                        sans: ['"JetBrains Mono"', 'monospace'], // Force Mono everywhere
+                        sans: ['"JetBrains Mono"', 'monospace'],
                     },
                     colors: {
-                        cyber: {
-                            bg: '#050505',
-                            card: '#0a0a0a',
-                            border: '#1a1a1a',
-                            purple: '#a855f7',
-                            orange: '#f97316',
-                            green: '#22c55e',
-                            gray: '#9ca3af'
-                        }
-                    },
-                    animation: { 'fade-in': 'fadeIn 0.3s ease-out' },
-                    keyframes: { fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } } }
+                        void: '#07070b',
+                        panel: '#11111a',
+                        panel2: '#1a1a26',
+                        line: '#3b3b4d',
+                        line2: '#6b6b82',
+                        ink: '#f5f5fa',
+                        dim: '#c3c3d3',
+                        mute: '#9393a8',
+                        violet: { DEFAULT: '#c084fc', fill: '#b26bff' },
+                        lime: '#4ade80',
+                        amber: '#fb923c',
+                        rose: '#ff6b6b'
+                    }
                 }
             }
         }
     </script>
     <style>
-        body {
-            background-color: #050505;
-            background-image: linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-            background-size: 30px 30px;
+        :root {
+            --void: #07070b; --panel: #11111a; --panel2: #1a1a26;
+            --line: #3b3b4d; --line2: #6b6b82;
+            --ink: #f5f5fa; --dim: #c3c3d3; --mute: #9393a8;
+            --violet: #c084fc; --violet-fill: #b26bff;
+            --lime: #4ade80; --amber: #fb923c; --rose: #ff6b6b;
         }
-        /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #050505; }
-        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #444; }
+        html { color-scheme: dark; }
+        body {
+            background-color: var(--void);
+            background-image: linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+            background-size: 32px 32px;
+            color: var(--ink);
+            font-size: 15px;
+            line-height: 1.55;
+        }
+
+        /* Focus clavier visible partout */
+        :focus-visible { outline: 3px solid var(--violet); outline-offset: 2px; }
+
+        /* Surfaces */
+        .panel { background: var(--panel); border: 1px solid var(--line); }
+        .panel-head { padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .h-section { font-size: 18px; font-weight: 800; color: var(--ink); letter-spacing: -0.01em; }
+        .text-dim { color: var(--dim); }
+        .text-mute { color: var(--mute); }
+
+        /* Boutons : l'action principale est pleine et ressort, le reste est en contour */
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            padding: 9px 16px; font-weight: 700; font-size: 14px; line-height: 1.2;
+            border: 2px solid var(--line2); color: var(--ink); background: transparent;
+            cursor: pointer; transition: background-color .12s, border-color .12s, color .12s, transform .08s, box-shadow .08s;
+            text-decoration: none; white-space: nowrap;
+        }
+        .btn:hover { background: var(--panel2); border-color: var(--ink); }
+        .btn:disabled { opacity: .5; cursor: not-allowed; }
+        .btn-primary {
+            background: var(--violet-fill); border-color: var(--violet-fill); color: #0b0b10;
+            font-weight: 800; box-shadow: 4px 4px 0 0 rgba(192,132,252,.38);
+        }
+        .btn-primary:hover { background: #c58dff; border-color: #c58dff; }
+        .btn-primary:active { transform: translate(3px, 3px); box-shadow: 1px 1px 0 0 rgba(192,132,252,.38); }
+        .btn-go { border-color: var(--lime); color: var(--lime); }
+        .btn-go:hover { background: rgba(74,222,128,.14); border-color: var(--lime); }
+        .btn-danger { border-color: var(--line2); color: var(--dim); }
+        .btn-danger:hover { border-color: var(--rose); color: var(--rose); background: rgba(255,107,107,.1); }
+        .btn-sm { padding: 6px 12px; font-size: 13px; }
+        .btn-icon { padding: 8px; }
+
+        /* Champs */
+        .field-label { display: block; font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 4px; }
+        .field-help { font-size: 13px; color: var(--mute); margin-top: 4px; }
+        .input {
+            width: 100%; background: var(--void); color: var(--ink);
+            border: 2px solid var(--line2); padding: 9px 12px; font: inherit; border-radius: 0;
+        }
+        .input::placeholder { color: var(--mute); }
+        .input:hover { border-color: var(--dim); }
+        .input:focus { border-color: var(--violet); outline: none; box-shadow: 0 0 0 3px rgba(192,132,252,.35); }
+
+        /* Accessibilité : texte réservé aux lecteurs d'écran */
+        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+        /* Barre de défilement */
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: var(--void); }
+        ::-webkit-scrollbar-thumb { background: #4a4a5e; border: 2px solid var(--void); }
+        ::-webkit-scrollbar-thumb:hover { background: #666680; }
+
+        @keyframes pop-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+        .pop-in { animation: pop-in .18s ease-out; }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation: none !important; transition: none !important; }
+        }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
-<body class="bg-cyber-bg min-h-screen font-mono text-slate-200 selection:bg-cyber-purple selection:text-white">
-    
-    <nav class="border-b border-cyber-border bg-cyber-bg/90 backdrop-blur-sm sticky top-0 z-50">
+<body class="min-h-screen font-mono selection:bg-violet-fill selection:text-black">
+
+    <a href="#contenu" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:bg-violet-fill focus:text-black focus:px-3 focus:py-2 focus:font-bold">Aller au contenu</a>
+
+    <nav class="border-b border-line bg-void/90 backdrop-blur-sm sticky top-0 z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between h-16 items-center">
+            <div class="flex justify-between h-16 items-center gap-4">
                 {% block nav_content %}
-                <div class="flex items-center gap-3">
-                    <svg class="w-6 h-6 text-cyber-purple" fill="currentColor" viewBox="0 0 24 24">
+                <a href="/" class="flex items-center gap-3 no-underline">
+                    <svg class="w-6 h-6 text-violet" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/>
                     </svg>
-                    <span class="text-xl font-bold tracking-wider text-cyber-purple">TIKTOK SCRAPER</span>
+                    <span class="text-lg font-extrabold text-ink tracking-tight">TikTok Scraper</span>
+                </a>
+                <div id="connState" class="flex items-center gap-2 text-sm text-mute" role="status" aria-live="polite">
+                    <span id="connDot" class="w-2.5 h-2.5 rounded-full bg-line2"></span>
+                    <span id="connText">Connexion…</span>
                 </div>
                 {% endblock %}
             </div>
         </div>
     </nav>
 
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <main id="contenu" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         {% block content %}{% endblock %}
     </main>
 

@@ -1,357 +1,356 @@
 {% extends "base.html" %}
 
-{% block title %}Dashboard - TikTok Scraper{% endblock %}
+{% block title %}Accueil - TikTok Scraper{% endblock %}
+
+{% block extra_head %}
+<style>
+    /* Barre de commande : l'élément central de la page */
+    .cmd-wrap { position: relative; background: var(--panel); border: 1px solid var(--line); padding: 28px; }
+    .cmd-wrap .corner { position: absolute; width: 18px; height: 18px; border: 0 solid var(--violet); }
+    .cmd-wrap .tl { top: -1px; left: -1px; border-top-width: 3px; border-left-width: 3px; }
+    .cmd-wrap .tr { top: -1px; right: -1px; border-top-width: 3px; border-right-width: 3px; }
+    .cmd-wrap .bl { bottom: -1px; left: -1px; border-bottom-width: 3px; border-left-width: 3px; }
+    .cmd-wrap .br { bottom: -1px; right: -1px; border-bottom-width: 3px; border-right-width: 3px; }
+    .cmd-row { display: flex; align-items: stretch; gap: 14px; flex-wrap: wrap; }
+    .cmd-input-box {
+        flex: 1 1 220px; min-width: 0; display: flex; align-items: center; gap: 10px;
+        background: var(--void); border: 2px solid var(--line2); padding: 0 16px;
+    }
+    .cmd-input-box:hover { border-color: var(--dim); }
+    .cmd-input-box:focus-within { border-color: var(--violet); box-shadow: 0 0 0 3px rgba(192,132,252,.35); }
+    .cmd-at { font-size: 30px; font-weight: 800; color: var(--violet); }
+    .cmd-input {
+        flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: var(--ink);
+        font: inherit; font-size: 26px; font-weight: 700; padding: 14px 0;
+    }
+    .cmd-input::placeholder { color: var(--mute); font-weight: 400; }
+    .cmd-go { font-size: 18px; padding: 0 28px; min-height: 60px; }
+    @media (max-width: 640px) {
+        .cmd-wrap { padding: 18px; }
+        .cmd-input { font-size: 22px; }
+        .cmd-go { flex: 1 1 100%; }
+    }
+
+    details.opts summary { cursor: pointer; font-weight: 700; color: var(--dim); display: inline-flex; align-items: center; gap: 8px; padding: 4px 0; }
+    details.opts summary:hover { color: var(--ink); }
+    details.opts summary::marker { content: ''; }
+    details.opts summary .chev { transition: transform .15s; display: inline-block; }
+    details.opts[open] summary .chev { transform: rotate(90deg); }
+
+    .stat-val { font-size: 28px; font-weight: 800; line-height: 1.1; }
+
+    .log-line { padding: 3px 0; border-bottom: 1px solid #1d1d2a; word-break: break-word; }
+</style>
+{% endblock %}
 
 {% block content %}
-    <!-- Stats Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div class="bg-cyber-card border border-cyber-border p-6 relative group hover:border-cyber-purple/50 transition-colors">
-            <div class="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyber-purple"></div>
-            <div class="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-cyber-purple"></div>
-            <div class="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-cyber-purple"></div>
-            <div class="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyber-purple"></div>
-            <dt class="truncate text-xs font-bold text-slate-500 uppercase tracking-wider font-mono">Profils Suivis</dt>
-            <dd class="mt-2 text-3xl font-bold tracking-tight text-white font-mono">{{ profiles|length }}</dd>
-        </div>
+    <!-- Barre de commande -->
+    <section aria-labelledby="titre-principal">
+        <div class="cmd-wrap">
+            <span class="corner tl"></span><span class="corner tr"></span>
+            <span class="corner bl"></span><span class="corner br"></span>
 
-        <div class="bg-cyber-card border border-cyber-border p-6 relative group hover:border-cyber-green/50 transition-colors">
-            <div class="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyber-green"></div>
-            <div class="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-cyber-green"></div>
-            <div class="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-cyber-green"></div>
-            <div class="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyber-green"></div>
-            <dt class="truncate text-xs font-bold text-slate-500 uppercase tracking-wider font-mono">Vidéos Totales</dt>
-            <dd class="mt-2 text-3xl font-bold tracking-tight text-cyber-green font-mono" id="totalVideos">0</dd>
-        </div>
+            <h1 id="titre-principal" class="text-2xl sm:text-3xl font-extrabold tracking-tight text-ink">Archiver un compte TikTok</h1>
+            <p class="text-dim mt-1 mb-5 max-w-2xl">Entrez un pseudo puis téléchargez. Les vidéos déjà récupérées sont ignorées, seules les nouvelles sont ajoutées.</p>
 
-        <div class="bg-cyber-card border border-cyber-border p-6 relative group hover:border-cyber-orange/50 transition-colors">
-            <div class="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyber-orange"></div>
-            <div class="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-cyber-orange"></div>
-            <div class="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-cyber-orange"></div>
-            <div class="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyber-orange"></div>
-            <dt class="truncate text-xs font-bold text-slate-500 uppercase tracking-wider font-mono">Stockage Utilisé</dt>
-            <dd class="mt-2 text-3xl font-bold tracking-tight text-cyber-orange font-mono" id="diskSpace">0 GB</dd>
-        </div>
-    </div>
+            <form id="extractForm" class="cmd-row" autocomplete="off">
+                <input type="hidden" id="platform" value="tiktok">
+                <label for="username" class="sr-only">Pseudo TikTok (sans le @)</label>
+                <div class="cmd-input-box">
+                    <span class="cmd-at" aria-hidden="true">@</span>
+                    <input type="text" id="username" name="username" class="cmd-input" placeholder="pseudo" autocapitalize="off" spellcheck="false" autofocus>
+                </div>
+                <button type="submit" id="downloadBtn" class="btn btn-primary cmd-go">Télécharger</button>
+            </form>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-        <!-- Extraction Form -->
-        <div class="lg:col-span-1">
-            <div class="bg-cyber-card border border-cyber-border p-6 h-full">
-                <h2 class="text-lg font-bold text-white mb-6 font-mono flex items-center">
-                    <span class="w-2 h-2 bg-cyber-purple mr-3 rounded-full"></span>
-                    NOUVEAU SCAN
-                </h2>
-                <form id="extractForm" class="space-y-5">
+            <details class="opts mt-5">
+                <summary><span class="chev" aria-hidden="true">▸</span> Options</summary>
+                <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4 mt-4">
                     <div>
-                        <label for="username" class="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 font-mono">Pseudo Cible</label>
-                        <div class="relative rounded-md shadow-sm">
-                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <span class="text-slate-500 sm:text-sm font-mono">@</span>
-                            </div>
-                            <input type="text" name="username" id="username" class="block w-full pl-8 bg-cyber-bg border-cyber-border text-white placeholder-slate-600 focus:ring-cyber-purple focus:border-cyber-purple sm:text-sm rounded-none font-mono py-2.5" placeholder="tiktok_user">
-                        </div>
+                        <label for="limit" class="field-label">Nombre maximum de vidéos</label>
+                        <input type="number" id="limit" min="0" inputmode="numeric" placeholder="Toutes" class="input">
+                        <p class="field-help">Vide ou 0 : tout télécharger. Mettez 5 pour un essai rapide.</p>
                     </div>
-
                     <div>
-                        <label for="platform" class="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 font-mono">Plateforme</label>
-                        <select id="platform" name="platform" class="block w-full bg-cyber-bg border-cyber-border text-white focus:ring-cyber-purple focus:border-cyber-purple sm:text-sm rounded-none font-mono py-2.5">
-                            <option value="tiktok">TikTok</option>
-                        </select>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label for="min_sleep" class="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 font-mono">Min Sleep</label>
-                            <input type="number" id="min_sleep" value="2" class="block w-full bg-cyber-bg border-cyber-border text-white focus:ring-cyber-purple focus:border-cyber-purple sm:text-sm rounded-none font-mono py-2.5">
+                        <span class="field-label" id="pause-label">Pause entre deux vidéos (secondes)</span>
+                        <div class="flex items-center gap-2" role="group" aria-labelledby="pause-label">
+                            <input type="number" id="min_sleep" value="2" min="0" aria-label="Pause minimale en secondes" class="input">
+                            <span class="text-mute" aria-hidden="true">à</span>
+                            <input type="number" id="max_sleep" value="6" min="0" aria-label="Pause maximale en secondes" class="input">
                         </div>
-                        <div>
-                            <label for="max_sleep" class="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 font-mono">Max Sleep</label>
-                            <input type="number" id="max_sleep" value="6" class="block w-full bg-cyber-bg border-cyber-border text-white focus:ring-cyber-purple focus:border-cyber-purple sm:text-sm rounded-none font-mono py-2.5">
-                        </div>
+                        <p class="field-help">Évite que TikTok vous bloque. Ne descendez pas trop bas.</p>
                     </div>
-
-                    <div>
-                        <label for="limit" class="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 font-mono">Limite (0 = illimité)</label>
-                        <input type="number" id="limit" placeholder="Ex: 50" class="block w-full bg-cyber-bg border-cyber-border text-white focus:ring-cyber-purple focus:border-cyber-purple sm:text-sm rounded-none font-mono py-2.5">
-                    </div>
-
-                    <div class="flex items-center">
-                        <input id="forceUpdate" name="forceUpdate" type="checkbox" class="h-4 w-4 text-cyber-purple focus:ring-cyber-purple border-cyber-border rounded bg-cyber-bg">
-                        <label for="forceUpdate" class="ml-2 block text-xs text-slate-400 font-mono">
-                            MODE MAJ (Forcer scan complet)
+                    <div class="sm:col-span-2">
+                        <label class="flex items-start gap-3 cursor-pointer">
+                            <input id="forceUpdate" name="forceUpdate" type="checkbox" class="mt-1 h-5 w-5 accent-violet-fill">
+                            <span>
+                                <span class="field-label !mb-0">Tout rescanner</span>
+                                <span class="field-help block !mt-0">Parcourt tout le profil et retente les vidéos en échec. À cocher si d'anciennes vidéos manquent après un téléchargement limité.</span>
+                            </span>
                         </label>
-                    </div>
-
-                    <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent text-sm font-bold rounded-none text-white bg-cyber-purple hover:bg-purple-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyber-purple transition uppercase tracking-wide font-mono">
-                        Lancer l'extraction
-                    </button>
-
-                    <button type="button" id="downloadBtn" class="w-full flex justify-center py-3 px-4 border border-transparent text-sm font-bold rounded-none text-white bg-cyber-green hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyber-green transition uppercase tracking-wide font-mono">
-                        Télécharger
-                    </button>
-                </form>
-            </div>
-        </div>
-
-        <!-- Terminal -->
-        <div class="lg:col-span-2">
-            <div class="bg-cyber-card border border-cyber-border p-6 h-full flex flex-col">
-                <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-lg font-bold text-white font-mono flex items-center">
-                        <span class="w-2 h-2 bg-cyber-green mr-3 rounded-full animate-pulse"></span>
-                        TERMINAL
-                    </h2>
-                    <div class="flex gap-2">
-                        <span class="w-3 h-3 rounded-full bg-red-500/20 border border-red-500/50"></span>
-                        <span class="w-3 h-3 rounded-full bg-yellow-500/20 border border-yellow-500/50"></span>
-                        <span class="w-3 h-3 rounded-full bg-green-500/20 border border-green-500/50"></span>
+                        <button type="button" id="listBtn" class="btn btn-sm mt-4">Lister les liens sans télécharger</button>
                     </div>
                 </div>
-                <div id="activityLog" class="flex-1 bg-black border border-cyber-border p-4 font-mono text-xs overflow-y-auto max-h-[500px] custom-scrollbar">
-                    <div class="text-slate-500 mb-2">System initialized... Waiting for commands...</div>
-                </div>
-            </div>
+            </details>
         </div>
-    </div>
+    </section>
 
-    <!-- Profiles List -->
-    <div class="bg-cyber-card border border-cyber-border overflow-hidden">
-        <div class="px-6 py-5 border-b border-cyber-border flex items-center justify-between">
-            <h3 class="text-lg font-bold text-white font-mono">PROFILS SUIVIS</h3>
-            <span class="bg-cyber-bg border border-cyber-border text-slate-300 py-1 px-3 text-xs font-mono rounded-none">
-                {{ profiles|length }} ACTIFS
-            </span>
+    <!-- Statistiques -->
+    <section aria-label="Statistiques globales" class="flex flex-wrap gap-x-12 gap-y-4">
+        <div>
+            <div class="stat-val text-ink" id="totalProfiles">{{ profiles|length }}</div>
+            <div class="text-mute text-sm">profils suivis</div>
         </div>
-        <ul class="divide-y divide-cyber-border">
-            {% for profile in profiles %}
-            <li class="hover:bg-white/5 transition-colors">
-                <div class="px-6 py-4 flex items-center justify-between">
-                    <a href="/profile/{{ profile.username }}" class="flex items-center min-w-0 gap-4 flex-1 cursor-pointer group">
-                        <div class="flex-shrink-0 h-10 w-10 rounded-none bg-cyber-bg border border-cyber-border flex items-center justify-center text-lg font-bold text-cyber-purple font-mono group-hover:border-cyber-purple transition-colors">
-                            {{ profile.username[0]|upper }}
-                        </div>
-                        <div class="min-w-0">
-                            <p class="text-sm font-bold text-white truncate font-mono group-hover:text-cyber-purple transition-colors">@{{ profile.username }}</p>
-                            <p class="text-xs text-slate-500 font-mono">LAST SCAN: {{ profile.last_scan if profile.last_scan else 'Never' }}</p>
-                        </div>
-                    </a>
-                    <div class="flex items-center gap-3">
-                        <button onclick="syncProfile('{{ profile.username }}')" class="p-2 text-slate-400 hover:text-cyber-green transition" title="Mise à jour">
-                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                            </svg>
-                        </button>
-                        <a href="/profile/{{ profile.username }}" class="p-2 text-slate-400 hover:text-white transition" title="Voir détails">
-                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                            </svg>
+        <div>
+            <div class="stat-val text-lime" id="totalVideos">0</div>
+            <div class="text-mute text-sm">vidéos téléchargées</div>
+        </div>
+        <div>
+            <div class="stat-val text-amber" id="diskSpace">0 Go</div>
+            <div class="text-mute text-sm">d'espace utilisé</div>
+        </div>
+    </section>
+
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-8">
+        <!-- Profils -->
+        <section class="lg:col-span-3 panel order-2 lg:order-1" aria-labelledby="titre-profils">
+            <div class="panel-head">
+                <h2 id="titre-profils" class="h-section">Profils suivis</h2>
+                {% if profiles|length > 6 %}
+                <div class="w-full sm:w-64">
+                    <label for="filterProfiles" class="sr-only">Filtrer les profils</label>
+                    <input type="search" id="filterProfiles" class="input !py-1.5 text-sm" placeholder="Filtrer les profils" autocomplete="off">
+                </div>
+                {% endif %}
+            </div>
+            <div id="profilesList">
+                {% if profiles %}
+                <ul class="divide-y divide-line">
+                    {% for profile in profiles %}
+                    <li class="profile-row px-5 py-4 flex flex-wrap items-center gap-4 hover:bg-panel2 transition-colors" data-name="{{ profile.username|lower }}">
+                        <a href="/profile/{{ profile.username }}" class="flex items-center gap-4 min-w-0 flex-1 group no-underline" style="min-width: 200px">
+                            <span class="shrink-0 h-12 w-12 border-2 border-line2 bg-void flex items-center justify-center text-xl font-extrabold text-violet group-hover:border-violet" aria-hidden="true">{{ profile.username[0]|upper }}</span>
+                            <span class="min-w-0">
+                                <span class="block font-bold text-ink truncate group-hover:text-violet">@{{ profile.username }}</span>
+                                <span class="block text-sm text-mute">{{ profile.video_count }} vidéo{{ 's' if profile.video_count != 1 }}{% if profile.last_scan %} · scanné le {{ profile.last_scan.split(' ')[0] }}{% else %} · jamais scanné{% endif %}</span>
+                            </span>
                         </a>
-                        <button onclick="deleteProfile('{{ profile.username }}')" class="p-2 text-slate-400 hover:text-red-500 transition" title="Supprimer">
-                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                        </button>
-                    </div>
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="syncProfile('{{ profile.username }}')" class="btn btn-sm btn-go">Mettre à jour</button>
+                            <a href="/profile/{{ profile.username }}" class="btn btn-sm">Ouvrir</a>
+                            <button type="button" onclick="deleteProfile('{{ profile.username }}')" class="btn btn-sm btn-danger btn-icon" aria-label="Supprimer {{ profile.username }} et ses vidéos" title="Supprimer le profil et ses vidéos">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            </button>
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <div class="px-6 py-12 text-center">
+                    <p class="text-ink font-bold text-lg">Aucun profil pour l'instant</p>
+                    <p class="text-dim mt-1">Entrez un pseudo dans la barre ci-dessus et cliquez sur Télécharger. Le profil apparaîtra ici dès les premières vidéos.</p>
                 </div>
-            </li>
-            {% endfor %}
-        </ul>
+                {% endif %}
+            </div>
+        </section>
+
+        <!-- Journal -->
+        <section class="lg:col-span-2 panel flex flex-col order-1 lg:order-2 lg:sticky lg:top-24 lg:self-start" aria-labelledby="titre-journal">
+            <div class="panel-head">
+                <h2 id="titre-journal" class="h-section flex items-center gap-3">
+                    <span class="w-2.5 h-2.5 rounded-full bg-lime" aria-hidden="true"></span>
+                    Journal en direct
+                </h2>
+                <button type="button" id="clearLog" class="btn btn-sm">Effacer</button>
+            </div>
+            <div id="activityLog" role="log" aria-live="polite" tabindex="0" class="flex-1 bg-black p-4 text-[13px] overflow-y-auto h-56 lg:h-[calc(100vh-14rem)] lg:min-h-[320px]">
+                <div class="text-mute" id="logPlaceholder">Le journal s'affiche ici dès qu'un téléchargement démarre.</div>
+            </div>
+        </section>
     </div>
 
-    <!-- Notification Toast -->
-    <div id="message" class="fixed bottom-5 right-5 hidden max-w-sm w-full bg-cyber-card border border-cyber-border p-4 shadow-lg rounded-none animate-fade-in z-50 font-mono text-sm text-white"></div>
+    <!-- Notification -->
+    <div id="message" role="status" aria-live="polite" class="fixed bottom-5 right-5 hidden max-w-sm w-[calc(100%-2.5rem)] bg-panel2 border-2 p-4 shadow-[6px_6px_0_0_rgba(0,0,0,.6)] z-50 text-sm font-bold"></div>
 {% endblock %}
 
 {% block scripts %}
     <script>
-        // --- UI Helpers ---
+        // --- Notification ---
+        let toastTimer = null;
         function showNotification(text, type) {
-            // Ne rien afficher si pas de texte
-            if (!text || text === 'undefined' || text === 'null') {
-                return;
-            }
-
+            if (!text || text === 'undefined' || text === 'null') return;
             const div = document.getElementById('message');
-            div.className = 'fixed bottom-5 right-5 max-w-sm w-full p-4 shadow-lg rounded-none animate-fade-in z-50 font-mono text-sm border';
-
-            if (type === 'success') {
-                div.classList.add('bg-cyber-card', 'border-cyber-green', 'text-cyber-green');
-            } else if (type === 'error') {
-                div.classList.add('bg-cyber-card', 'border-red-500', 'text-red-500');
-            } else {
-                div.classList.add('bg-cyber-card', 'border-cyber-purple', 'text-cyber-purple');
-            }
-
+            const colors = { success: ['var(--lime)', 'var(--lime)'], error: ['var(--rose)', 'var(--rose)'], info: ['var(--violet)', 'var(--ink)'] };
+            const c = colors[type] || colors.info;
+            div.style.borderColor = c[0];
+            div.style.color = c[1];
             div.textContent = text;
             div.classList.remove('hidden');
-
-            setTimeout(() => {
-                div.classList.add('hidden');
-            }, 5000);
+            div.classList.add('pop-in');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => div.classList.add('hidden'), 6000);
         }
 
-        // --- SSE Logging System ---
+        // --- État de la connexion au serveur ---
+        function setConn(ok) {
+            document.getElementById('connDot').className = 'w-2.5 h-2.5 rounded-full ' + (ok ? 'bg-lime' : 'bg-rose');
+            document.getElementById('connText').textContent = ok ? 'Serveur connecté' : 'Connexion perdue, nouvelle tentative…';
+        }
+
+        // --- Journal en direct (SSE) ---
         let eventSource = null;
+        let refreshTimer = null;
 
         function startLogStream() {
             if (eventSource) return;
-
             eventSource = new EventSource('/stream_logs');
-
-            eventSource.onopen = function() {
-                addLog("Connexion au terminal établie.", "text-cyber-green");
-            };
-
-            eventSource.onmessage = function(event) {
+            eventSource.onopen = () => setConn(true);
+            eventSource.onerror = () => setConn(false);
+            eventSource.onmessage = (event) => {
                 const data = JSON.parse(event.data);
-                
-                let colorClass = "text-slate-300";
-                if (data.level === 'error') colorClass = "text-red-500 font-bold";
-                if (data.level === 'warning') colorClass = "text-yellow-500";
-                if (data.level === 'success') colorClass = "text-cyber-green";
+                let color = 'var(--dim)';
+                if (data.level === 'error') color = 'var(--rose)';
+                else if (data.level === 'warning') color = 'var(--amber)';
+                else if (data.level === 'success') color = 'var(--lime)';
+                addLog(data.message, color);
 
-                addLog(data.message, colorClass, data.time);
-            };
-
-            eventSource.onerror = function() {
-                // Auto-reconnect handled by browser
+                // Fin de tâche : on met la liste à jour sans recharger la page
+                if (/RÉSUMÉ|Aucune nouvelle|Erreur critique|Listing impossible/i.test(data.message || '')) {
+                    clearTimeout(refreshTimer);
+                    refreshTimer = setTimeout(refreshProfiles, 1500);
+                }
             };
         }
 
-        function addLog(message, colorClass = 'text-slate-300', time = null) {
+        function addLog(message, color) {
             const logDiv = document.getElementById('activityLog');
-
+            const ph = document.getElementById('logPlaceholder');
+            if (ph) ph.remove();
             const entry = document.createElement('div');
-            entry.className = `font-mono text-xs py-0.5 border-b border-slate-800/50 ${colorClass} animate-fade-in break-all`;
-
-            // Le message contient déjà le timestamp au format [HH:MM:SS] [NIVEAU] [MODULE]
-            // Donc on n'ajoute plus de timestamp supplémentaire
-            entry.innerHTML = message;
-
+            entry.className = 'log-line';
+            entry.style.color = color || 'var(--dim)';
+            entry.textContent = message;
             logDiv.appendChild(entry);
+            while (logDiv.children.length > 500) logDiv.removeChild(logDiv.firstChild);
             logDiv.scrollTop = logDiv.scrollHeight;
         }
 
-        // --- Initialization ---
-        document.addEventListener("DOMContentLoaded", () => {
-            startLogStream();
-            
-            fetch('/api/stats')
-                .then(r => r.json())
-                .then(data => {
-                    document.getElementById('diskSpace').textContent = data.total_size_gb + ' GB';
-                    document.getElementById('totalVideos').textContent = data.total_videos;
-                }).catch(e => console.log("Stats offline"));
+        document.getElementById('clearLog').addEventListener('click', () => {
+            document.getElementById('activityLog').innerHTML = '';
         });
 
-        // --- Event Handlers ---
-        
-        // Extraction Form
-        document.getElementById('extractForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const username = document.getElementById('username').value.replace('@', '');
-            const platform = document.getElementById('platform').value;
-            const limit = document.getElementById('limit').value || null;
-            const forceUpdate = document.getElementById('forceUpdate').checked;
-
-            if (!username) {
-                showNotification('Veuillez entrer un pseudo', 'error');
-                return;
-            }
-
-            showNotification('🔍 Initialisation du protocole...', 'info');
-
-            try {
-                const response = await fetch('/api/extract', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username,
-                        platform,
-                        limit: limit ? parseInt(limit) : null,
-                        force_update: forceUpdate
-                    })
-                });
-                const data = await response.json();
-
-                if (response.ok && (data.success || data.status === 'started')) {
-                    showNotification(data.message, 'success');
-                    setTimeout(() => location.reload(), 2000);
-                } else {
-                    showNotification(data.error || 'Erreur inconnue', 'error');
-                }
-            } catch (error) {
-                showNotification('Erreur connexion serveur', 'error');
-            }
-        });
-
-        // Download Button
-        document.getElementById('downloadBtn').addEventListener('click', async (e) => {
-            e.preventDefault();
-            const username = document.getElementById('username').value.replace('@', '');
-            const platform = document.getElementById('platform').value;
-            const limit = document.getElementById('limit').value || null;
-            const minSleep = parseInt(document.getElementById('min_sleep').value);
-            const maxSleep = parseInt(document.getElementById('max_sleep').value);
-            const forceUpdate = document.getElementById('forceUpdate').checked;
-
-            if (!username) {
-                showNotification('Veuillez entrer un pseudo', 'error');
-                return;
-            }
-
-            showNotification('⬇️ Téléchargement démarré...', 'info');
-
-            try {
-                const response = await fetch('/api/download', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username,
-                        platform,
-                        limit: limit ? parseInt(limit) : null,
-                        min_sleep: minSleep,
-                        max_sleep: maxSleep,
-                        force_update: forceUpdate
-                    })
-                });
-                const data = await response.json();
-
-                if (response.ok && (data.success || data.status === 'started')) {
-                    showNotification(data.message, 'success');
-                    setTimeout(() => location.reload(), 2000);
-                } else {
-                    showNotification(data.error || 'Erreur inconnue', 'error');
-                }
-            } catch (error) {
-                showNotification('Erreur connexion serveur', 'error');
-            }
-        });
-
-        // Sync Profile
-        async function syncProfile(username) {
-            showNotification(`🔄 Synchronisation de ${username}...`, 'info');
-            try {
-                await fetch('/api/download', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, platform: 'tiktok', min_sleep: 2, max_sleep: 6, force_update: false })
-                });
-            } catch (e) { showNotification('Erreur Sync', 'error'); }
+        // --- Statistiques et liste ---
+        function loadStats() {
+            fetch('/api/stats').then(r => r.json()).then(data => {
+                document.getElementById('diskSpace').textContent = data.total_size_gb + ' Go';
+                document.getElementById('totalVideos').textContent = data.total_videos;
+                document.getElementById('totalProfiles').textContent = data.total_profiles;
+            }).catch(() => {});
         }
 
-        // Delete Profile
-        async function deleteProfile(username) {
-            if (!confirm(`Supprimer l'historique de ${username} ?`)) return;
+        async function refreshProfiles() {
             try {
-                const res = await fetch(`/api/profile/${username}/delete`, { method: 'DELETE' });
+                const html = await (await fetch('/')).text();
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const fresh = doc.getElementById('profilesList');
+                if (fresh) { document.getElementById('profilesList').innerHTML = fresh.innerHTML; applyFilter(); }
+            } catch (e) { /* silencieux : la liste sera à jour au prochain chargement */ }
+            loadStats();
+        }
+
+        function applyFilter() {
+            const input = document.getElementById('filterProfiles');
+            const q = input ? input.value.trim().toLowerCase().replace(/^@/, '') : '';
+            document.querySelectorAll('.profile-row').forEach(li => {
+                li.style.display = (!q || li.dataset.name.includes(q)) ? '' : 'none';
+            });
+        }
+        document.addEventListener('input', (e) => { if (e.target && e.target.id === 'filterProfiles') applyFilter(); });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            startLogStream();
+            loadStats();
+        });
+
+        // --- Lancement ---
+        function readForm() {
+            const limitRaw = document.getElementById('limit').value;
+            return {
+                username: document.getElementById('username').value.trim().replace(/^@/, ''),
+                platform: document.getElementById('platform').value,
+                limit: limitRaw ? parseInt(limitRaw) : null,   // 0 ou vide : illimité (côté serveur)
+                min_sleep: parseInt(document.getElementById('min_sleep').value),
+                max_sleep: parseInt(document.getElementById('max_sleep').value),
+                force_update: document.getElementById('forceUpdate').checked
+            };
+        }
+
+        async function post(url, body) {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            return { ok: response.ok, data: await response.json() };
+        }
+
+        async function launch(kind) {
+            const f = readForm();
+            if (!f.username) {
+                showNotification('Entrez un pseudo pour commencer.', 'error');
+                document.getElementById('username').focus();
+                return;
+            }
+            const btn = document.getElementById('downloadBtn');
+            btn.disabled = true;
+            try {
+                let res;
+                if (kind === 'download') {
+                    showNotification('Téléchargement de @' + f.username + ' démarré. Suivez le journal.', 'info');
+                    res = await post('/api/download', f);
+                } else {
+                    showNotification('Liste des liens de @' + f.username + ' en cours.', 'info');
+                    res = await post('/api/extract', { username: f.username, platform: f.platform, limit: f.limit, force_update: f.force_update });
+                }
+                if (res.ok && (res.data.success || res.data.status === 'started')) {
+                    showNotification(res.data.message, 'success');
+                } else {
+                    showNotification(res.data.error || 'Le serveur a refusé la demande.', 'error');
+                }
+            } catch (error) {
+                showNotification('Serveur injoignable. Vérifiez que web_app.py tourne.', 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        document.getElementById('extractForm').addEventListener('submit', (e) => { e.preventDefault(); launch('download'); });
+        document.getElementById('listBtn').addEventListener('click', () => launch('extract'));
+
+        // --- Mise à jour d'un profil existant ---
+        async function syncProfile(username) {
+            showNotification('Mise à jour de @' + username + ' démarrée. Suivez le journal.', 'info');
+            try {
+                const res = await post('/api/download', { username, platform: 'tiktok', min_sleep: 2, max_sleep: 6, force_update: false });
+                if (!(res.ok && (res.data.success || res.data.status === 'started'))) {
+                    showNotification(res.data.error || 'Le serveur a refusé la demande.', 'error');
+                }
+            } catch (e) { showNotification('Serveur injoignable.', 'error'); }
+        }
+
+        // --- Suppression ---
+        async function deleteProfile(username) {
+            if (!confirm("Supprimer @" + username + " et toutes ses vidéos téléchargées ?\n\nCette action est définitive.")) return;
+            try {
+                const res = await fetch('/api/profile/' + encodeURIComponent(username) + '/delete', { method: 'DELETE' });
                 const data = await res.json();
                 if (data.success) {
-                    addLog(`DELETE: ${username} supprimé`, 'text-red-500');
-                    location.reload();
+                    addLog('Profil ' + username + ' supprimé', 'var(--rose)');
+                    refreshProfiles();
+                } else {
+                    showNotification(data.error || 'Suppression impossible.', 'error');
                 }
-            } catch (e) { alert('Erreur suppression'); }
+            } catch (e) { showNotification('Erreur pendant la suppression.', 'error'); }
         }
     </script>
 {% endblock %}
