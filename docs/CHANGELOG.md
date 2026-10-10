@@ -5,6 +5,20 @@ Tous les changements notables de ce projet seront documentés dans ce fichier.
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [1.6.0] - 2026-10-10
+
+### Ajouté
+- **Orchestrateur unique** (`orchestrator.py`) : `run_download()` est le seul point d'entrée de téléchargement, utilisé par le CLI (`main.py --download`) et par l'interface web (`background_download_task`)
+- **Options yt-dlp / cookies centralisées** dans `ytdlp_options.py` (`build_ydl_opts`, `default_cookies_file`, ...)
+- Tests : `tests/test_orchestrator.py`, `tests/test_ytdlp_options.py`, `tests/test_web_download.py`
+
+### Corrigé
+- **Limite ignorée dans l'interface web** : `POST /api/download` lit `limit` (entier positif ou `null`, sinon 400) et le transmet jusqu'à `run_download`
+
+### Supprimé
+- `pipeline_downloader.py` et `parallel_downloader.py` (remplacés par l'orchestrateur) et leurs références dans la documentation
+- Calcul dupliqué du chemin du fichier de cookies et chemin codé en dur dans `web_app.py`
+
 ## [1.5.0] - 2026-10-10
 
 ### Supprimé

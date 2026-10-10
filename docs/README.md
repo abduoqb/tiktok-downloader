@@ -9,9 +9,9 @@ Bienvenue dans la documentation complète du projet TikTok Scraper.
 - **[METADATA_UPGRADE.md](METADATA_UPGRADE.md)** - Système de métadonnées optimisé (O(1) lookup, cache slideshow)
 
 ### ⚡ Performance
-- **[PERFORMANCE_BOOST.md](PERFORMANCE_BOOST.md)** - Système de boost ultra-rapide (6-8x plus performant)
+- **[PERFORMANCE_BOOST.md](PERFORMANCE_BOOST.md)** - Optimisations de performance (générateur streaming, orchestrateur unique)
   - Générateur streaming
-  - Pipeline parallèle
+  - Orchestrateur (`orchestrator.py`, workers optionnels)
   - Tags & Favoris
   - Export multi-format
 
@@ -39,8 +39,8 @@ pip install -r requirements.txt
 # Téléchargement simple
 python main.py username
 
-# Avec pipeline ultra-rapide (5-10x plus rapide)
-python pipeline_downloader.py username 3 10
+# Extraction + téléchargement (orchestrateur unique)
+python main.py username --download --limit 10
 ```
 
 ### Interface Web
@@ -53,7 +53,7 @@ python web_app.py
 
 ## 📊 Statistiques du projet
 
-- **Performance**: 6-8x plus rapide avec le système de pipeline
+- **Performance**: extraction en streaming, orchestrateur unique pour le CLI et le web
 - **Métadonnées**: O(1) lookup, 99% d'appels API évités
 - **Formats**: Support vidéos + slideshows
 - **Export**: CSV, JSON, HTML
@@ -62,11 +62,7 @@ python web_app.py
 
 ## 🔧 Problèmes connus
 
-### Bug #1: Limite de téléchargement ne fonctionne pas
-**Symptôme**: La limite spécifiée dans l'interface web est ignorée
-**Cause**: Le paramètre `limit` n'est pas passé au thread de téléchargement
-**Status**: En cours de résolution
-**Fichier**: `web_app.py:405-822`
+Voir [KNOWN_ISSUES.md](KNOWN_ISSUES.md). Le bug de la limite ignorée dans l'interface web est corrigé.
 
 ---
 

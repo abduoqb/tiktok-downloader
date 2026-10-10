@@ -34,9 +34,9 @@ python main.py compte_prive --download --limit 50 --cookies-browser chrome
 python main.py "https://www.tiktok.com/@compte_prive/video/123456789" --cookies-browser chrome
 ```
 
-**Mode pipeline (ultra-rapide) avec cookies :**
+**Avec un fichier de cookies :**
 ```bash
-python pipeline_downloader.py compte_prive --cookies-browser chrome
+python main.py compte_prive --download --cookies-file tiktok.com_cookies.txt
 ```
 
 ## Prérequis
@@ -80,9 +80,9 @@ python main.py compte_prive --download --cookies-browser edge
 
 ### Le script est lent
 
-Utilisez le **mode pipeline** qui est beaucoup plus rapide :
+Le délai entre deux téléchargements est volontaire (anti-ban). Réduisez-le avec `--min-sleep` / `--max-sleep` (au risque d'un blocage de TikTok) :
 ```bash
-python pipeline_downloader.py compte_prive --cookies-browser chrome
+python main.py compte_prive --download --min-sleep 2 --max-sleep 5 --cookies-browser chrome
 ```
 
 ## Méthode Alternative : Fichier cookies.txt

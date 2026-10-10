@@ -4,12 +4,12 @@
 
 ### Vue d'ensemble
 
-Le système de téléchargement a été **révolutionné** avec 3 niveaux d'amélioration progressive :
+Le système de téléchargement a évolué en 3 niveaux progressifs :
 
 ```
 Niveau 1: Système original (Baseline)
 Niveau 2: Système avec générateur (Votre boost) → 2-3x plus rapide
-Niveau 3: Pipeline streaming (Nouveau boost) → 5-10x plus rapide
+Niveau 3: Orchestrateur unique (orchestrator.py) → workers optionnels
 ```
 
 ---
@@ -75,58 +75,33 @@ yield v3 ─────────────────> download(v3)
 
 ---
 
-## 🔥 Niveau 3: Pipeline Streaming (Boost Ultime)
+## 🔥 Niveau 3: Orchestrateur unique
 
-### Architecture
-
-```
-┌──────────────────────────────────────────────────────────┐
-│                    PIPELINE STREAMING                     │
-├──────────────────────────────────────────────────────────┤
-│                                                           │
-│  Thread 1 (Extraction)                                    │
-│     │                                                     │
-│     ├──> yield v1 ──> Queue ──┐                          │
-│     ├──> yield v2 ──> Queue ──┤                          │
-│     ├──> yield v3 ──> Queue ──┼──> Thread 2 (Download)   │
-│     ├──> yield v4 ──> Queue ──┼──> Thread 3 (Download)   │
-│     └──> yield v5 ──> Queue ──┴──> Thread 4 (Download)   │
-│                                                           │
-└──────────────────────────────────────────────────────────┘
-```
+L'ancien pipeline streaming et le téléchargeur parallèle séparés ont été supprimés. Toute la logique de téléchargement (CLI et interface web) passe désormais par `orchestrator.run_download()`.
 
 ### Code
 
 ```python
-from pipeline_downloader import download_with_streaming_pipeline
+import orchestrator
 
-# Ultra rapide avec 3 workers parallèles
-stats = download_with_streaming_pipeline(
-    username='lapukipuks',
-    max_workers=3,  # 3 téléchargements simultanés
-    limit=10
+stats = orchestrator.run_download(
+    'lapukipuks', 'tiktok',
+    min_sleep=5, max_sleep=15,
+    limit=10,
+    workers=1,  # >1 : pool de threads (risque de rate-limit accru)
 )
 ```
 
 ### Mécanisme
 
-1. **Thread Extracteur** : Yield des vidéos dans une Queue
-2. **3 Threads Downloaders** : Consomment la Queue en parallèle
-3. **Queue** : Buffer de 10 vidéos en attente
-4. **Streaming complet** : Extraction + Téléchargement simultanés
+1. Extraction des liens (`limit` et `force_update` respectés)
+2. Pour chaque élément : détection du type, téléchargement, vérification du fichier, historique
+3. Pause anti-ban entre les éléments (`workers=1` : strictement séquentiel)
+4. `workers > 1` : `ThreadPoolExecutor`, plusieurs requêtes simultanées (risque de ban TikTok)
 
 ### Performance
-- **Parallélisation**: 3 téléchargements simultanés
-- **Latence**: 0 (commence immédiatement)
-- **Vitesse**: ~1.5-2 vidéos/seconde (**5-10x plus rapide**)
-
-### Benchmark Réel (100 vidéos)
-
-| Méthode | Temps | Vitesse | Gain |
-|---------|-------|---------|------|
-| Niveau 1 (Original) | 500s | 0.2 v/s | Baseline |
-| Niveau 2 (Générateur) | 200s | 0.5 v/s | 2.5x |
-| Niveau 3 (Pipeline) | 60s | 1.7 v/s | **8.3x** |
+- Le gain réel dépend surtout des pauses anti-ban configurées (`--min-sleep` / `--max-sleep`)
+- Les chiffres de benchmark de l'ancien pipeline (5-10x) ne sont plus d'actualité
 
 ---
 
@@ -226,29 +201,12 @@ id,url,type,date,size_mb,tags,favorite
 ### Ligne de commande
 
 ```bash
-# Méthode 1: Original (lent)
-python main.py lapukipuks --download --limit 10
-
-# Méthode 2: Pipeline ultra-rapide (5-10x)
-python pipeline_downloader.py lapukipuks 3 10
-#                                        │ │
-#                                        │ └─ limit
-#                                        └─── workers
+python main.py lapukipuks --download --limit 10 --min-sleep 3 --max-sleep 8
 ```
 
-### Interface Web (À venir)
+### Interface Web
 
-```python
-# web_app.py - utiliser le pipeline
-from pipeline_downloader import download_with_streaming_pipeline
-
-def background_download_task_v2(username, ...):
-    download_with_streaming_pipeline(
-        username=username,
-        max_workers=3,
-        progress_callback=emit_log
-    )
-```
+`web_app.py` utilise `orchestrator.run_download()` (le `limit` saisi est transmis).
 
 ---
 
@@ -260,7 +218,6 @@ def background_download_task_v2(username, ...):
 |---------|-----------|------------|-------------|
 | Niveau 1 | 30s | 5min | 50min |
 | Niveau 2 | **Instantané** | **Instantané** | **Instantané** |
-| Niveau 3 | **Instantané** | **Instantané** | **Instantané** |
 
 ### Utilisation des ressources
 
@@ -268,7 +225,6 @@ def background_download_task_v2(username, ...):
 |---------|-----|--------|---------|
 | Niveau 1 | 20% | 30% | 100MB |
 | Niveau 2 | 25% | 40% | 10MB ✅ |
-| Niveau 3 | **80%** ✅ | **90%** ✅ | 15MB ✅ |
 
 ### Temps total (100 vidéos)
 
@@ -276,39 +232,13 @@ def background_download_task_v2(username, ...):
 |---------|------------|----------------|-------|
 | Niveau 1 | 5min | 8min | **13min** |
 | Niveau 2 | Streaming | 6min | **6min** |
-| Niveau 3 | Streaming | **2min** | **~2min** |
 
 ---
 
 ## 🎯 Recommandations
 
-### Pour petits volumes (< 10 vidéos)
-→ **Niveau 2** (générateur) suffit
-
-### Pour gros volumes (> 50 vidéos)
-→ **Niveau 3** (pipeline) fortement recommandé
-
-### Configuration optimale
-
-```python
-# 3 workers = sweet spot
-# - Pas de surcharge réseau
-# - Bon compromis vitesse/stabilité
-# - Fonctionne même avec connexion moyenne
-
-download_with_streaming_pipeline(
-    username='lapukipuks',
-    max_workers=3  # ← Optimal
-)
-```
-
-### Ajuster selon votre connexion
-
-| Connexion | Workers | Vitesse attendue |
-|-----------|---------|------------------|
-| Lente (< 10 Mbps) | 2 | ~1 v/s |
-| Moyenne (10-50 Mbps) | 3 | ~1.5 v/s |
-| Rapide (> 50 Mbps) | 4-5 | ~2+ v/s |
+- Gardez `workers=1` (défaut) : TikTok limite le débit et bannit facilement.
+- Ajustez les pauses (`--min-sleep`, `--max-sleep`) plutôt que le nombre de workers.
 
 ---
 
@@ -316,12 +246,11 @@ download_with_streaming_pipeline(
 
 ### Court terme ✅ (Fait)
 - [x] Générateur streaming
-- [x] Pipeline parallèle
+- [x] Orchestrateur unique (CLI + web)
 - [x] Tags & Favoris
 - [x] Export multi-format
 
 ### Moyen terme
-- [ ] Intégration web_app.py (utiliser pipeline)
 - [ ] Interface React pour tags/favoris
 - [ ] Compression vidéo automatique
 - [ ] Détection de doublons par hash
@@ -334,55 +263,15 @@ download_with_streaming_pipeline(
 
 ---
 
-## 📈 Impact Global
-
-```
-Avant (Niveau 1):
-100 vidéos = 13 minutes
-1000 vidéos = 2+ heures
-
-Maintenant (Niveau 3):
-100 vidéos = 2 minutes (6.5x plus rapide)
-1000 vidéos = 20 minutes (6x plus rapide)
-```
-
-**Gain de temps hebdomadaire** (pour un utilisateur moyen) :
-- Avant : ~1h de téléchargements
-- Maintenant : ~10 minutes
-- **Économie : 50 minutes/semaine** ⏰
-
----
-
 ## 🎓 Leçons techniques
 
-### Pourquoi ça marche ?
-
-1. **Générateur** : Pas de liste en mémoire → commence instantanément
-2. **Threading** : Parallélisation → utilise mieux le réseau
-3. **Queue** : Buffer → équilibrage charge extraction/download
-4. **Cache** : is_slideshow() → 99% d'appels API évités
-
-### Optimisations clés
-
-```python
-# Avant
-videos = [v1, v2, v3, ...]  # O(n) mémoire, attente totale
-
-# Après
-for video in generator:  # O(1) mémoire, stream
-    queue.put(video)  # Download immédiat
-```
+1. **Générateur** : pas de liste en mémoire, l'extraction démarre instantanément
+2. **Orchestrateur unique** : une seule logique de téléchargement (CLI et web), testable
+3. **Cache** : `is_slideshow()` évite 99% des appels API
+4. **Options centralisées** : `ytdlp_options.py` (yt-dlp, cookies)
 
 ---
 
 ## 📝 Conclusion
 
-Le système de téléchargement TikTok Scraper a été **multiplié par 6-8** en performance grâce à :
-
-1. Architecture en **pipeline streaming**
-2. **Téléchargements parallèles** (3 workers)
-3. **Générateur** pour 0 latence
-4. **Tags/Favoris** pour organisation
-5. **Export multi-format** pour flexibilité
-
-**Résultat** : Un système professionnel, rapide et scalable ! 🚀
+Extraction en streaming, métadonnées optimisées, tags/favoris, export multi-format et un orchestrateur unique pour tous les points d'entrée.

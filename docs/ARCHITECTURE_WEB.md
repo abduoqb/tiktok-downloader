@@ -55,8 +55,9 @@
 │  └──────────────────────────────────────────────────────────────┘
 │                                                                   │
 │  ┌──────────────────────────────────────────────────────────────┤
-│  │  background_download_task(username, platform, sleep, ...)    │
-│  │  1. Extraction des liens                                     │
+│  │  background_download_task(username, platform, sleep, limit)  │
+│  │  Adaptateur mince autour de orchestrator.run_download() :    │
+│  │  1. Extraction des liens (limit respecté)                    │
 │  │  2. Détection slideshow (avec cache)                         │
 │  │  3. Téléchargement vidéos/slideshows                         │
 │  │  4. Mise à jour metadata.json                                │
@@ -67,7 +68,8 @@
 └─────────────────────────────────────────────────────────────────┘
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     MODULES CORE (main.py)                       │
+│     ORCHESTRATEUR (orchestrator.py) + MODULES CORE (main.py)     │
+│     Options yt-dlp / cookies centralisées : ytdlp_options.py     │
 │                                                                   │
 │  ┌────────────────────┐  ┌────────────────────┐                 │
 │  │  get_video_links() │  │  download_video()  │                 │
