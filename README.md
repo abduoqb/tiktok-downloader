@@ -1,416 +1,220 @@
 # TikTok Scraper
 
-Un outil Python complet pour extraire et télécharger des vidéos depuis TikTok et YouTube Shorts avec interface web moderne, détection intelligente des slideshows.
+Outil Python pour extraire et télécharger les vidéos et slideshows d'un profil TikTok (YouTube Shorts en option), avec une interface web et une ligne de commande.
 
 ## Table des matières
 
-- [Quick Start](#quick-start)
+- [Démarrage rapide](#démarrage-rapide)
 - [Fonctionnalités](#fonctionnalités)
 - [Installation](#installation)
+- [Cookies TikTok (obligatoires)](#cookies-tiktok-obligatoires)
 - [Utilisation](#utilisation)
-  - [Interface Web](#interface-web-recommandé)
-  - [Ligne de Commande](#ligne-de-commande-cli)
-- [Structure des fichiers](#structure-des-fichiers)
-- [Exemples de workflows](#exemples-de-workflows)
-- [Interface Web - Fonctionnalités détaillées](#interface-web---fonctionnalités-détaillées)
-- [Sécurité](#sécurité)
+  - [Interface web](#interface-web)
+  - [Ligne de commande](#ligne-de-commande)
+- [Comment ça marche](#comment-ça-marche)
+- [Structure du projet](#structure-du-projet)
 - [Dépannage](#dépannage)
-- [Limitations](#limitations)
-- [Technologies](#technologies)
-- [Contribuer](#contribuer)
-- [Améliorations futures](#améliorations-futures)
+- [Tests](#tests)
+- [Déploiement](#déploiement)
 - [Documentation complémentaire](#documentation-complémentaire)
 
-## Quick Start
+## Démarrage rapide
 
 ```bash
-# 1. Installer les dépendances
+# 1. Dépendances Python + ffmpeg installé sur la machine
 pip install -r requirements.txt
 
-# 2. Lancer l'interface web
+# 2. Exportez vos cookies TikTok vers tiktok.com_cookies.txt (voir plus bas)
+
+# 3. Interface web : http://localhost:5001
 python web_app.py
 
-# 3. Ouvrir dans le navigateur
-# http://localhost:5000
-
-# Ou en ligne de commande
-python main.py charolife --download
+# ou ligne de commande
+python main.py nom_du_compte --download --cookies-file tiktok.com_cookies.txt
 ```
 
 ## Fonctionnalités
 
-✨ **Core**
-- Extraction rapide de liens (mode `extract_flat`)
-- Téléchargement avec retry automatique (3 tentatives)
-- Gestion d'historique JSON pour éviter les doublons
-- Support TikTok et YouTube Shorts
-- **Interface Web** : Dashboard complet avec logs en temps réel
-
-🧠 **Intelligence**
-- **Mode incrémental smart** : S'arrête après 10 vidéos consécutives déjà connues
-- **Détection de slideshows** : Identifie et sauvegarde les panoramas dans un fichier JSON séparé (sans télécharger)
-- **Anti-bannissement** : Délais aléatoires configurables
-
-🎯 **Simplicité**
-- **Mode URL unique** : Téléchargez un TikTok directement via son lien
-- **Format de fichier simple** : `20250120_charolife_7574516139682729238.mp4`
-- Organisation automatique par profil
+- Extraction des liens d'un profil et téléchargement incrémental (s'arrête après 10 vidéos consécutives déjà connues).
+- Vidéos **et slideshows** (les images sont rangées dans un dossier par slideshow).
+- **Toujours en H.264** : les vidéos HEVC/AV1/VP9 sont converties automatiquement (sinon écran noir avec le son dans les navigateurs).
+- Nouvelle tentative automatique (3 essais) et pauses aléatoires anti-bannissement.
+- Un téléchargement n'est marqué réussi que si le fichier existe vraiment.
+- Les téléchargements en échec sont mémorisés ; `--force-update` les relance.
+- Interface web : logs en temps réel, lecteur vidéo intégré, statistiques, gestion des profils.
+- Mode URL unique : télécharger une vidéo à partir de son lien.
 
 ## Installation
 
 ### Prérequis
-- Python 3.7+
-- `yt-dlp`
+
+- Python 3.10 ou plus récent
+- **ffmpeg** (avec `ffprobe`) dans le PATH : indispensable pour la conversion H.264
+- Dépendances Python : `yt-dlp`, `gallery-dl` (version 1.32 ou plus), `flask`, `requests`
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Ou manuellement :
+Au démarrage, `preflight.py` vérifie yt-dlp, gallery-dl, ffmpeg, ffprobe et l'âge du fichier de cookies, et affiche un avertissement en cas de problème. Vous pouvez aussi le lancer seul : `python preflight.py`.
+
+**Maintenez les outils à jour.** TikTok change souvent, et un yt-dlp ou gallery-dl trop ancien est la première cause de panne :
+
 ```bash
-pip install yt-dlp flask
+pip install -U yt-dlp gallery-dl
 ```
+
+## Cookies TikTok (obligatoires)
+
+TikTok bloque désormais le listing des profils pour les outils automatiques. Sans cookies de connexion, l'extraction échoue (le message d'erreur est explicite).
+
+1. Connectez-vous à TikTok dans votre navigateur.
+2. Exportez les cookies au format Netscape (extension de type « Get cookies.txt »).
+3. Enregistrez le fichier sous le nom `tiktok.com_cookies.txt` **à la racine du projet** (il est ignoré par git, ne le partagez jamais : il donne accès à votre session).
+
+L'interface web le détecte automatiquement. En ligne de commande, passez-le avec `--cookies-file tiktok.com_cookies.txt`. Les cookies expirent : réexportez-les si les téléchargements se remettent à échouer. Détails dans [docs/COOKIES_GUIDE.md](docs/COOKIES_GUIDE.md).
 
 ## Utilisation
 
-### Interface Web (Recommandé)
+### Interface web
 
-1. Lancez le serveur :
-   ```bash
-   python web_app.py
-   ```
-2. Ouvrez `http://localhost:5000` dans votre navigateur.
+```bash
+python web_app.py
+```
 
-### Ligne de Commande (CLI)
+Ouvrez `http://localhost:5001`.
 
-#### Syntaxe
+1. Ajoutez un profil (nom d'utilisateur, sans le `@`).
+2. Cliquez sur **Download** : réglez la limite et les pauses puis lancez. Les logs s'affichent en direct.
+3. Utilisez **Sync** sur un profil existant pour ne récupérer que les nouveautés.
+4. Ouvrez la page d'un profil pour lire les vidéos dans le navigateur.
+
+Champs du formulaire :
+
+| Champ | Effet |
+|-------|-------|
+| **Limite** | Nombre maximal de **nouvelles** vidéos à traiter. **`0` = illimité** (champ vide aussi). |
+| **Min / Max sleep** | Pause aléatoire entre deux éléments, en secondes (5 et 15 par défaut). |
+| **MODE MAJ (Forcer scan complet)** | Revérifie tout l'historique et relance aussi les téléchargements en échec. |
+
+### Ligne de commande
 
 ```bash
 python main.py <username_ou_url> [options]
 ```
 
-### Arguments
+| Option | Défaut | Description |
+|--------|--------|-------------|
+| `username_ou_url` | requis | Nom du compte, ou URL d'une vidéo TikTok |
+| `--download` | désactivé | Télécharge (sans cette option : extraction des liens seulement) |
+| `--limit N` | aucune | Nombre maximal de nouvelles vidéos. **`0` ou absent = illimité** |
+| `--min-sleep S` / `--max-sleep S` | `5` / `15` | Pause aléatoire entre deux éléments (secondes) |
+| `--force-update` | désactivé | Ignore l'arrêt incrémental et relance les échecs |
+| `--cookies-file FICHIER` | aucun | Fichier de cookies au format Netscape |
+| `--cookies-browser NAVIGATEUR` | aucun | `chrome`, `firefox`, `edge`, `safari`, `opera`, `brave` (le fichier prime s'il est donné) |
+| `--platform` | `tiktok` | `tiktok` ou `youtube` |
 
-| Argument | Type | Défaut | Description |
-|----------|------|--------|-------------|
-| `username_ou_url` | Requis | - | Pseudo du créateur OU URL directe d'un TikTok |
-| `--platform` | Optionnel | `tiktok` | Plateforme (`tiktok` ou `youtube`) |
-| `--download` | Flag | `False` | Active le téléchargement |
-| `--limit` | Optionnel | - | Limite le nombre de vidéos |
-| `--min-sleep` | Optionnel | `5` | Pause min entre téléchargements (s) |
-| `--max-sleep` | Optionnel | `15` | Pause max entre téléchargements (s) |
+Le code de sortie est `1` si l'extraction échoue ou si le type d'une URL est inconnu.
 
-### Exemples
-
-#### 1. Extraire les liens d'un profil (sans télécharger)
-
-```bash
-python main.py charolife
-```
-
-Génère : `downloads/charolife/charolife_videos.txt`
-
-#### 2. Télécharger toutes les nouvelles vidéos
+#### Exemples
 
 ```bash
-python main.py bellapoarch --download
+# Lister les liens d'un profil sans télécharger
+python main.py moncompte --cookies-file tiktok.com_cookies.txt
+
+# Télécharger les nouvelles vidéos
+python main.py moncompte --download --cookies-file tiktok.com_cookies.txt
+
+# Tester sur 2 vidéos seulement
+python main.py moncompte --download --limit 2 --cookies-file tiktok.com_cookies.txt
+
+# Archiver tout un profil, en allant doucement
+python main.py moncompte --download --limit 0 --min-sleep 10 --max-sleep 20 --cookies-file tiktok.com_cookies.txt
+
+# Relancer aussi les échecs précédents
+python main.py moncompte --download --force-update --cookies-file tiktok.com_cookies.txt
+
+# Une vidéo seule, à partir de son lien
+python main.py "https://www.tiktok.com/@moncompte/video/7574516139682729238"
 ```
 
-#### 3. Limiter à 20 vidéos
+Des pauses trop courtes peuvent faire bannir votre IP.
 
-```bash
-python main.py charlidamelio --download --limit 20
-```
+## Comment ça marche
 
-#### 4. Télécharger une vidéo unique via son URL
+1. **Listing** : yt-dlp essaie de lister le profil. TikTok le bloque en ce moment ; l'appli bascule alors sur gallery-dl (avec vos cookies). Si les deux échouent, une erreur explicite s'affiche.
+2. **Classification** : pour chaque lien, détection vidéo ou slideshow. Si le type ne peut pas être déterminé (cookies expirés, 403, réseau), l'élément est signalé en erreur, non marqué dans l'historique, et réessayé au prochain lancement.
+3. **Téléchargement** : vidéo via yt-dlp, slideshow via gallery-dl. Le fichier est vérifié avant d'être enregistré dans l'historique.
+4. **Conversion H.264** : si la vidéo n'est pas en H.264 (8 bits, yuv420p), elle est convertie avec ffmpeg. L'original n'est remplacé qu'une fois la nouvelle version valide.
+5. **Pause** anti-bannissement avant chaque élément suivant, y compris après un échec.
 
-```bash
-python main.py "https://www.tiktok.com/@charolife/video/7574516139682729238"
-```
+### Mode incrémental
 
-#### 5. Mode rapide (pour profil de confiance)
+Les vidéos sont parcourues de la plus récente à la plus ancienne. L'extraction s'arrête après 10 vidéos consécutives déjà dans l'historique, donc un `Sync` régulier est rapide. `--force-update` désactive cet arrêt.
 
-```bash
-python main.py addisonre --download --min-sleep 1 --max-sleep 3
-```
+### Échecs
 
-⚠️ **Attention** : Des délais trop courts peuvent causer un bannissement IP !
+Une vidéo en échec est mémorisée et **ignorée aux lancements suivants**, sauf avec `--force-update` (ou la case « MODE MAJ » de l'interface web).
 
-## Structure des fichiers
+## Structure du projet
 
 ```
 tiktok/
-├── main.py                           # Script CLI principal
-├── web_app.py                        # Interface web Flask
-├── requirements.txt                  # Dépendances Python
-├── .gitignore                        # Fichiers à ignorer
-├── README.md                         # Ce fichier
-├── templates/                        # Templates HTML
-│   ├── base.html
-│   ├── index.html
-│   └── profile.html
+├── main.py              # CLI + fonctions de téléchargement (yt-dlp, gallery-dl, ffmpeg)
+├── orchestrator.py      # Boucle de téléchargement unique (web et CLI)
+├── ytdlp_options.py     # Options yt-dlp / gallery-dl et gestion des cookies
+├── web_app.py           # Interface web Flask + API
+├── metadata_manager.py  # Historique et métadonnées par profil
+├── preflight.py         # Vérification de l'environnement au démarrage
+├── export_data.py       # Export des données d'un profil
+├── requirements.txt
+├── templates/ static/   # Interface web
+├── tests/               # Tests pytest
+├── scripts/             # Déploiement, nettoyage
+├── docs/                # Documentation détaillée
+├── tiktok.com_cookies.txt   # Vos cookies (ignoré par git)
 └── downloads/
-    └── charolife/
-        ├── charolife_videos.txt      # Liste de tous les liens
-        ├── download_history.json     # IDs des vidéos téléchargées
-        ├── slideshows.json           # TikToks panorama détectés
-        ├── 20250120_charolife_7574516.mp4
-        └── 20250121_charolife_7575823.mp4
+    └── moncompte/
+        ├── moncompte_videos.txt                       # Liens connus
+        ├── metadata.json                              # Historique
+        ├── 20250120_moncompte_7574516139682729238.mp4 # Vidéo
+        └── 20250121_moncompte_7575823..._img=1/       # Slideshow (images)
 ```
 
-## Format de nommage
-
-**Vidéos normales** : `{date}_{username}_{id}.mp4`
-
-Exemple : `20250120_charolife_7574516139682729238.mp4`
-
-**Slideshows** : Sauvegardés dans `slideshows.json` (non téléchargés)
-
-```json
-[
-  {
-    "id": "7572951061078625558",
-    "url": "https://www.tiktok.com/@user/video/7572951061078625558"
-  }
-]
-```
-
-## Fonctionnement interne
-
-### Mode Incrémental
-
-1. Charge l'historique depuis `download_history.json`
-2. Parcourt les vidéos du plus récent au plus ancien
-3. S'arrête après **10 vidéos consécutives** déjà dans l'historique
-4. Permet de combler les "trous" (vidéos manquées lors d'un téléchargement partiel)
-
-### Détection de Slideshows
-
-Avant chaque téléchargement, le script vérifie si c'est un panorama (images + audio uniquement) :
-- ✅ **Vidéo normale** → Téléchargement
-- ⚠️ **Slideshow** → Sauvegarde dans `slideshows.json` + Skip
-
-### Retry & Anti-détection
-
-- **3 tentatives** par vidéo en cas d'échec
-- **Pause de 2s** entre tentatives
-- **Délais aléatoires** entre téléchargements (5-15s par défaut)
-
-## Exemples de workflows
-
-### Veille quotidienne (plusieurs profils)
-
-**Avec CLI :**
-```bash
-python main.py charolife --download --limit 10
-python main.py bellapoarch --download --limit 10
-python main.py charlidamelio --download --limit 10
-```
-
-**Avec Interface Web :**
-1. Ajoutez les profils via le formulaire
-2. Utilisez le bouton "Sync" sur chaque profil pour télécharger les nouveautés
-
-### Archivage complet d'un profil
-
-```bash
-# Première fois (peut prendre du temps)
-python main.py khaby.lame --download --min-sleep 10 --max-sleep 20
-
-# Relances suivantes (que les nouveaux)
-python main.py khaby.lame --download
-```
-
-### Téléchargement manuel de vidéos spécifiques
-
-```bash
-python main.py "https://www.tiktok.com/@charolife/video/123456"
-python main.py "https://www.tiktok.com/@bellapoarch/video/789012"
-```
-
-## Interface Web - Fonctionnalités détaillées
-
-### Dashboard Principal
-- Formulaire d'ajout de profils (TikTok/YouTube)
-- Liste des profils avec statistiques (vidéos téléchargées, espace disque)
-- Actions rapides : Détails, Sync, Suppression
-- Statistiques globales en temps réel
-
-### Page Profil
-- Statistiques détaillées du profil
-- Liste complète des vidéos téléchargées
-- Lecteur vidéo intégré (lecture directe dans le navigateur)
-- Bouton de synchronisation pour télécharger les nouvelles vidéos
-- Copie rapide des chemins de fichiers
-
-### API REST
-L'interface web expose une API REST complète :
-- `GET /api/profiles` - Liste des profils
-- `POST /api/extract` - Extraire les liens
-- `POST /api/download` - Télécharger (tâche background)
-- `GET /api/task/<task_id>` - Statut d'une tâche
-- `DELETE /api/profile/<username>/delete` - Supprimer un profil
-- `GET /api/stats` - Statistiques globales
-
-Plus de détails dans [WEB_INTERFACE.md](WEB_INTERFACE.md)
+Nom des vidéos : `{date}_{username}_{id}.mp4`.
 
 ## Dépannage
 
-### "No new videos found"
+| Symptôme | Cause probable et solution |
+|----------|----------------------------|
+| `Failed to parse JSON` dans la console | Message de yt-dlp, attendu : l'appli bascule sur gallery-dl. Ce n'est pas fatal tant que « repli sur gallery-dl » est suivi d'éléments trouvés. |
+| `Listing impossible pour @compte` | Cookies absents ou expirés, compte supprimé/privé, ou gallery-dl trop ancien. Réexportez les cookies et lancez `pip install -U yt-dlp gallery-dl`. |
+| Vidéo noire avec le son dans le navigateur | Vidéo en HEVC téléchargée avant la garantie H.264. Les nouveaux téléchargements sont convertis automatiquement ; la reconversion des anciens fichiers est notée dans [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md). |
+| `[H264] WARNING … still hevc` | ffmpeg est absent ou la conversion a échoué. Installez ffmpeg et vérifiez `ffmpeg -version`. |
+| Les téléchargements échouent en boucle | Augmentez les pauses, mettez à jour yt-dlp, réexportez les cookies. |
+| Une vidéo ratée n'est jamais retentée | Normal sans `--force-update` : relancez avec cette option. |
 
-- Vérifiez le pseudo
-- Le profil est peut-être privé
-- Mettez à jour `yt-dlp` : `pip install --upgrade yt-dlp`
-
-### Téléchargements qui échouent
-
-- Augmentez les délais : `--min-sleep 15 --max-sleep 30`
-- Vérifiez votre connexion
-- Mettez à jour `yt-dlp`
-
-### Historique corrompu
-
-Supprimez `downloads/<username>/download_history.json` pour recommencer.
-
-## Limitations
-
-- ❌ **Profils privés** : Non supportés
-- ⚠️ **Rate limiting** : Respectez des délais raisonnables
-- ❌ **Lives** : Non supportés
-- ⚠️ **Slideshows** : Détectés mais non téléchargés (limitations de yt-dlp)
-
-## Technologies
-
-### Backend
-- **Python 3.7+** : Langage principal
-- **yt-dlp** : Moteur d'extraction vidéo (fork de youtube-dl)
-- **Flask 3.0+** : Framework web pour l'interface
-- **Threading** : Gestion des tâches asynchrones
-
-### Frontend
-- **HTML5/CSS3** : Structure et style
-- **Tailwind CSS** : Framework CSS utilitaire
-- **JavaScript (Vanilla)** : Interactions client
-- **Jinja2** : Moteur de templates
-
-### Stockage
-- **JSON** : Stockage des données (historique, métadonnées)
-
-### Architecture
-- **RESTful API** : Communication frontend-backend
-- **Server-Sent Events (SSE)** : Logs en temps réel
-- **Mode Extract Flat** : Extraction optimisée sans téléchargement complet
-
-Pour plus de détails techniques, voir [explication_projet.md](explication_projet.md)
-
-## Contribuer
-
-Les contributions sont les bienvenues ! Pour contribuer :
-
-1. **Forkez** le projet
-2. **Créez une branche** pour votre fonctionnalité (`git checkout -b feature/ma-fonctionnalite`)
-3. **Commitez** vos changements (`git commit -m 'Ajout de ma fonctionnalité'`)
-4. **Pushez** vers la branche (`git push origin feature/ma-fonctionnalite`)
-5. Ouvrez une **Pull Request**
-
-### Bugs et suggestions
-
-- Utilisez les **Issues** GitHub pour signaler des bugs
-- Proposez des **améliorations** via les Issues
-- Partagez vos **cas d'usage** intéressants
-
-### Développement local
+## Tests
 
 ```bash
-# Cloner le projet
-git clone <url-du-repo>
-cd tiktok
-
-# Installer les dépendances
-pip install -r requirements.txt
-
-# Lancer en mode développement
-python web_app.py
+python -m pytest tests -q
 ```
 
-## Améliorations futures
+Les tests n'utilisent pas le réseau. Les tests de conversion H.264 utilisent un vrai ffmpeg et sont ignorés s'il est absent.
 
-### Court terme
-- ✅ Interface web moderne
-- ✅ Lecteur vidéo intégré
-- ⬜ Barre de progression en temps réel
-- ⬜ Filtres et recherche dans la liste des vidéos
-- ⬜ Mode sombre (dark mode)
+## Déploiement
 
-### Moyen terme
-- ⬜ Planification de tâches (cron jobs)
-- ⬜ Notifications par email
-- ⬜ Export des données (CSV)
-- ⬜ Graphiques de statistiques
-- ⬜ Support de playlists
-
-### Long terme
-- ⬜ Migration vers SQLite/PostgreSQL
-- ⬜ Authentification multi-utilisateurs
-- ⬜ Support Instagram Reels
-- ⬜ API documentée avec Swagger
-- ⬜ Docker & docker-compose
-
-## Déploiement sur serveur (VPS)
-
-Pour déployer l'application sur un serveur VPS (Ubuntu/Debian) :
-
-### Installation rapide (script automatique)
-
-```bash
-# Se connecter au VPS
-ssh root@votre-ip
-
-# Télécharger et exécuter le script
-wget https://raw.githubusercontent.com/votre-repo/tiktok-scraper/master/scripts/deploy.sh
-chmod +x deploy.sh
-sudo ./deploy.sh
-```
-
-Le script installe automatiquement :
-- ✅ Python, pip, git
-- ✅ Environnement virtuel Python
-- ✅ Service systemd pour démarrage automatique
-- ✅ Nginx (optionnel) comme reverse proxy
-- ✅ Pare-feu UFW configuré
-- ✅ Gunicorn pour la production
-
-### Configuration post-installation
-
-```bash
-# Redémarrer le service
-sudo systemctl restart tiktok-scraper
-
-# Voir les logs
-sudo journalctl -u tiktok-scraper -f
-```
-
-### Guide complet
-
-Pour une installation manuelle détaillée, configuration SSL, sauvegardes automatiques, etc., consultez **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+Docker (`Dockerfile`, `docker-compose.yml`) et un script d'installation VPS (`scripts/deploy.sh`) sont fournis. Le serveur de production utilise `gunicorn web_app:app`. L'état des tâches étant en mémoire, **gardez un seul processus** (`-w 1`) si vous voulez que le suivi des tâches et des logs soit cohérent. Le fichier de cookies n'est pas inclus dans l'image : montez-le en volume. Guide complet : [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Documentation complémentaire
 
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** : Guide complet de déploiement sur VPS (installation, configuration, sécurité)
-- **[WEB_INTERFACE.md](WEB_INTERFACE.md)** : Guide détaillé de l'interface web et de l'API REST
-- **[explication_projet.md](explication_projet.md)** : Architecture technique et choix de conception
-- **[analysis.md](analysis.md)** : Analyse approfondie du projet
-
-## Licence
-
-Projet personnel - Utilisation libre
+- [docs/COOKIES_GUIDE.md](docs/COOKIES_GUIDE.md) : export et gestion des cookies
+- [docs/WEB_INTERFACE.md](docs/WEB_INTERFACE.md) : interface web et API REST
+- [docs/ARCHITECTURE_WEB.md](docs/ARCHITECTURE_WEB.md) : architecture
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) : déploiement
+- [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) : problèmes connus et tâches reportées
+- [docs/CHANGELOG.md](docs/CHANGELOG.md) : historique des versions
 
 ## Avertissement
 
-⚠️ **Usage responsable** : Cet outil est destiné à un **usage personnel et éducatif** uniquement.
-
-- Respectez les conditions d'utilisation de TikTok et YouTube
-- Le téléchargement massif peut violer leurs CGU
-- Respectez les droits d'auteur du contenu
-- N'utilisez pas cet outil à des fins commerciales sans autorisation
-- Utilisez des délais raisonnables pour éviter le bannissement IP
+Cet outil est destiné à un usage personnel et éducatif. Respectez les conditions d'utilisation de TikTok et YouTube, ainsi que les droits d'auteur du contenu. Utilisez des pauses raisonnables pour éviter le bannissement de votre IP.
