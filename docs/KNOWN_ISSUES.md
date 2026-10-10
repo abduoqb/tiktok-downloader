@@ -76,6 +76,11 @@ Configuration corrigée dans `main.py`:
 
 ## 📋 Améliorations futures
 
+### Qualité 540p (H.264 natif)
+Depuis la v1.7.0, le téléchargement privilégie le H.264 natif de TikTok, limité à 540p,
+plutôt que le HEVC 720p+ (qui exigeait un ré-encodage). Si une résolution supérieure
+est souhaitée, il faut changer le sélecteur dans `ytdlp_options.py` et accepter la conversion.
+
 ### Conversion des anciens téléchargements HEVC en H.264
 **Priorité**: Moyenne (tâche reportée)
 

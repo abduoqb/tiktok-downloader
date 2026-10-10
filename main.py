@@ -11,6 +11,7 @@ import re
 import tempfile
 import threading
 import queue
+import copy
 from datetime import datetime
 from metadata_manager import OptimizedMetadataManager
 from ytdlp_options import build_ydl_opts, build_gallerydl_cookie_args
@@ -41,6 +42,33 @@ def save_to_history(username, video_id, url="", item_type="video", file_size=0, 
     """
     manager = get_metadata_manager(username)
     manager.add(video_id, url, item_type, file_size, file_count, success)
+
+# Cache mémoire des extractions : url -> (timestamp monotonic, info_dict).
+# Alimenté par is_slideshow, consommé (pop) par download_video : 1 requête par vidéo.
+_INFO_CACHE_TTL = 120    # durée de vie (s)
+_INFO_CACHE_MAX = 64     # taille maximale
+_info_cache = {}
+_info_cache_lock = threading.Lock()
+
+
+def _info_cache_put(url, info):
+    now = time.monotonic()
+    with _info_cache_lock:
+        for key in [k for k, (ts, _) in _info_cache.items() if now - ts > _INFO_CACHE_TTL]:
+            del _info_cache[key]
+        while len(_info_cache) >= _INFO_CACHE_MAX:
+            del _info_cache[min(_info_cache, key=lambda k: _info_cache[k][0])]
+        _info_cache[url] = (now, info)
+
+
+def _info_cache_pop(url):
+    """Renvoie (et retire) l'info fraîche de l'URL, ou None."""
+    with _info_cache_lock:
+        entry = _info_cache.pop(url, None)
+    if entry and time.monotonic() - entry[0] <= _INFO_CACHE_TTL:
+        return entry[1]
+    return None
+
 
 def is_slideshow(video_url, username=None, use_cache=True, cookies_browser=None, cookies_file=None):
     """
@@ -92,6 +120,8 @@ def is_slideshow(video_url, username=None, use_cache=True, cookies_browser=None,
 
             # If only audio available (no video), it's likely a slideshow
             result = has_audio and not has_video
+            if not result:
+                _info_cache_put(video_url, info)  # réutilisé par download_video (1 requête)
 
         # Cache the result (only known results reach this point)
         if use_cache and username:
@@ -754,12 +784,21 @@ def download_video(video_url, username, video_id, retries=3, cookies_browser=Non
     ydl_opts = build_ydl_opts('download', cookies_file, cookies_browser,
                               outtmpl=f'{output_dir}/%(upload_date)s_%(id)s.%(ext)s')
 
+    # Extraction déjà faite par is_slideshow : première tentative seulement, sans requête de plus
+    cached_info = _info_cache_pop(video_url)
+
     downloaded = False
     for attempt in range(retries):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # With ignoreerrors=True, yt-dlp does not raise: the file check below is the source of truth
-                retcode = ydl.download([video_url])
+                if cached_info is not None:
+                    info, cached_info = cached_info, None  # jamais réutilisée aux tentatives suivantes
+                    print("Reusing cached extraction (no second page request)")
+                    # Le sélecteur de format est ré-appliqué à la liste complète `formats`
+                    retcode = 0 if ydl.process_ie_result(copy.deepcopy(info), download=True) is not None else 1
+                else:
+                    retcode = ydl.download([video_url])
 
             # Post-process: Rename to include username
             # Find file with this video ID (just downloaded)
@@ -877,8 +916,8 @@ def main():
     parser.add_argument("username_or_url", help="The username (pseudo) or a direct TikTok URL.")
     parser.add_argument("--platform", default="tiktok", help="Target platform (default: tiktok).")
     parser.add_argument("--download", action="store_true", help="Download the videos after extraction.")
-    parser.add_argument("--min-sleep", type=int, default=5, help="Minimum sleep time in seconds (default: 5).")
-    parser.add_argument("--max-sleep", type=int, default=15, help="Maximum sleep time in seconds (default: 15).")
+    parser.add_argument("--min-sleep", type=int, default=2, help="Minimum sleep time in seconds (default: 2).")
+    parser.add_argument("--max-sleep", type=int, default=6, help="Maximum sleep time in seconds (default: 6).")
     parser.add_argument("--limit", type=int, help="Limit the number of videos to extract/download.")
     parser.add_argument("--force-update", action="store_true", help="Force update mode: check all videos and ignore incremental stop.")
     parser.add_argument("--cookies-browser", choices=['chrome', 'firefox', 'edge', 'safari', 'opera', 'brave'],

@@ -94,7 +94,7 @@ Champs du formulaire :
 | Champ | Effet |
 |-------|-------|
 | **Limite** | Nombre maximal de **nouvelles** vidéos à traiter. **`0` = illimité** (champ vide aussi). |
-| **Min / Max sleep** | Pause aléatoire entre deux éléments, en secondes (5 et 15 par défaut). |
+| **Min / Max sleep** | Pause aléatoire entre deux éléments, en secondes (2 et 6 par défaut). |
 | **MODE MAJ (Forcer scan complet)** | Revérifie tout l'historique et relance aussi les téléchargements en échec. |
 
 ### Ligne de commande
@@ -108,7 +108,7 @@ python main.py <username_ou_url> [options]
 | `username_ou_url` | requis | Nom du compte, ou URL d'une vidéo TikTok |
 | `--download` | désactivé | Télécharge (sans cette option : extraction des liens seulement) |
 | `--limit N` | aucune | Nombre maximal de nouvelles vidéos. **`0` ou absent = illimité** |
-| `--min-sleep S` / `--max-sleep S` | `5` / `15` | Pause aléatoire entre deux éléments (secondes) |
+| `--min-sleep S` / `--max-sleep S` | `2` / `6` | Pause aléatoire entre deux éléments (secondes) |
 | `--force-update` | désactivé | Ignore l'arrêt incrémental et relance les échecs |
 | `--cookies-file FICHIER` | aucun | Fichier de cookies au format Netscape |
 | `--cookies-browser NAVIGATEUR` | aucun | `chrome`, `firefox`, `edge`, `safari`, `opera`, `brave` (le fichier prime s'il est donné) |
@@ -144,8 +144,8 @@ Des pauses trop courtes peuvent faire bannir votre IP.
 
 1. **Listing** : yt-dlp essaie de lister le profil. TikTok le bloque en ce moment ; l'appli bascule alors sur gallery-dl (avec vos cookies). Si les deux échouent, une erreur explicite s'affiche.
 2. **Classification** : pour chaque lien, détection vidéo ou slideshow. Si le type ne peut pas être déterminé (cookies expirés, 403, réseau), l'élément est signalé en erreur, non marqué dans l'historique, et réessayé au prochain lancement.
-3. **Téléchargement** : vidéo via yt-dlp, slideshow via gallery-dl. Le fichier est vérifié avant d'être enregistré dans l'historique.
-4. **Conversion H.264** : si la vidéo n'est pas en H.264 (8 bits, yuv420p), elle est convertie avec ffmpeg. L'original n'est remplacé qu'une fois la nouvelle version valide.
+3. **Téléchargement** : vidéo via yt-dlp, slideshow via gallery-dl. L'extraction faite à l'étape 2 est réutilisée (une seule requête par vidéo). yt-dlp choisit d'abord le **H.264 natif de TikTok (540p)** ; contrepartie : 540p au lieu des 720p/1080p HEVC. Le fichier est vérifié avant d'être enregistré dans l'historique.
+4. **Conversion H.264 (repli)** : seulement si TikTok ne propose pas de H.264 et que le HEVC est téléchargé, la vidéo est convertie avec ffmpeg (8 bits, yuv420p). L'original n'est remplacé qu'une fois la nouvelle version valide.
 5. **Pause** anti-bannissement avant chaque élément suivant, y compris après un échec.
 
 ### Mode incrémental

@@ -15,9 +15,10 @@ _PURPOSES = {
         'no_warnings': True,
         'extract_flat': False,
     },
-    # Préfère H.264 (avc1), repli sur le meilleur format disponible
+    # Préfère le H.264 natif (TikTok le nomme vcodec 'h264', ids h264_540p_*), repli sur le
+    # meilleur format disponible (HEVC bytevc1, converti ensuite par ensure_h264)
     "download": {
-        'format': 'bestvideo[vcodec^=avc1]+bestaudio/best[vcodec^=avc1]/best',
+        'format': 'best[vcodec~="^(h264|avc)"]/bestvideo[vcodec~="^(h264|avc)"]+bestaudio/best',
         # Conteneur mp4 même si le repli n'est pas H.264 (ensure_h264 le convertit ensuite)
         'merge_output_format': 'mp4',
         'quiet': False,

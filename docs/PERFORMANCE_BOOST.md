@@ -86,7 +86,7 @@ import orchestrator
 
 stats = orchestrator.run_download(
     'lapukipuks', 'tiktok',
-    min_sleep=5, max_sleep=15,
+    min_sleep=2, max_sleep=6,
     limit=10,
     workers=1,  # >1 : pool de threads (risque de rate-limit accru)
 )

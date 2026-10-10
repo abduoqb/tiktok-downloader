@@ -383,8 +383,8 @@ def background_extract_task(username, platform, limit):
         if username in active_threads:
             del active_threads[username]
 
-def _normalize_sleep(min_sleep, max_sleep, default_min=5.0, default_max=15.0):
-    """Convertit en nombres finis >= 0 (repli 5 / 15), échange si min > max."""
+def _normalize_sleep(min_sleep, max_sleep, default_min=2.0, default_max=6.0):
+    """Convertit en nombres finis >= 0 (repli 2 / 6), échange si min > max."""
     def conv(value, default):
         if value is None or isinstance(value, bool):
             return default

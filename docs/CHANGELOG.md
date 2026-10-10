@@ -5,6 +5,16 @@ Tous les changements notables de ce projet seront documentés dans ce fichier.
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [1.7.0] - 2026-10-10
+
+### Corrigé
+- **Sélecteur de format yt-dlp** : l'ancien (`vcodec^=avc1`) ne correspondait jamais à TikTok (codec `h264`, formats `h264_540p_*`) et retombait sur le HEVC `bytevc1_720p`, ce qui forçait un ré-encodage ffmpeg de chaque vidéo (fichiers ~3x plus gros). Nouveau : `best[vcodec~="^(h264|avc)"]/bestvideo[vcodec~="^(h264|avc)"]+bestaudio/best`. `ensure_h264` reste le filet de sécurité (HEVC converti seulement en repli)
+
+### Modifié
+- **1 requête par vidéo** : l'extraction de `is_slideshow` est mise en cache (120 s, taille bornée, consommée une fois) et réutilisée par `download_video` via `process_ie_result` ; repli automatique sur `download()` en cas d'échec
+- **Pauses par défaut 2 à 6 s** (au lieu de 5 à 15 s) : CLI, interface web, orchestrateur, documentation
+- Contrepartie : qualité 540p (H.264 natif) au lieu de 720p/1080p (HEVC)
+
 ## [1.6.0] - 2026-10-10
 
 ### Ajouté

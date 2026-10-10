@@ -75,7 +75,7 @@ def _normalize_sleep(min_sleep, max_sleep):
     return (high, low) if low > high else (low, high)
 
 
-def run_download(username, platform="tiktok", *, min_sleep=5, max_sleep=15, limit=None,
+def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit=None,
                  force_update=False, cookies_file=None, cookies_browser=None, workers=1,
                  log=None, progress=None, should_stop=None, sleep=None, forward_extraction_logs=True):
     """

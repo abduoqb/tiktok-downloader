@@ -26,7 +26,8 @@ def test_probe_opts_no_ignoreerrors():
 
 def test_download_opts_and_outtmpl_override():
     opts = yo.build_ydl_opts("download", outtmpl="d/%(upload_date)s_%(id)s.%(ext)s")
-    assert opts['format'] == 'bestvideo[vcodec^=avc1]+bestaudio/best[vcodec^=avc1]/best'
+    assert opts['format'] == 'best[vcodec~="^(h264|avc)"]/bestvideo[vcodec~="^(h264|avc)"]+bestaudio/best'
+    assert opts['merge_output_format'] == 'mp4'
     assert opts['quiet'] is False
     assert opts['ignoreerrors'] is True
     assert opts['restrictfilenames'] is True

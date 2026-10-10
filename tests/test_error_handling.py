@@ -211,3 +211,76 @@ def test_ensure_h264_replaces_on_success(tmp_path, monkeypatch):
     main.ensure_h264(str(original))
     assert original.read_bytes() == b"H264-OUTPUT"
     assert [p.name for p in tmp_path.iterdir()] == [original.name]
+
+
+# ---------------------------------------------------------------- réutilisation de l'extraction
+
+class FakeYDLReuse(FakeYDL):
+    process_calls = []
+    process_behavior = None   # callable(info) -> résultat, ou exception
+
+    def process_ie_result(self, info, download=True):
+        FakeYDL.calls += 1
+        FakeYDLReuse.process_calls.append(info)
+        return FakeYDLReuse.process_behavior(info)
+
+
+@pytest.fixture
+def reuse_env(env, monkeypatch):
+    FakeYDLReuse.process_calls = []
+    FakeYDLReuse.process_behavior = None
+    main._info_cache.clear()
+    monkeypatch.setattr(main.yt_dlp, "YoutubeDL", FakeYDLReuse)
+    monkeypatch.setattr(main, "ensure_h264", lambda p: p)
+    yield env
+    main._info_cache.clear()
+
+
+def _video_info():
+    return {"id": VIDEO_ID, "formats": [{"vcodec": "h264", "acodec": "aac"}]}
+
+
+def test_download_reuses_extraction_from_is_slideshow(reuse_env):
+    user_dir = reuse_env["user_dir"]
+    FakeYDL.extract_behavior = lambda url: _video_info()
+
+    def process(info):
+        with open(os.path.join(user_dir, f"20240101_{VIDEO_ID}.mp4"), "wb") as f:
+            f.write(b"data")
+        return info
+    FakeYDLReuse.process_behavior = process
+    FakeYDL.download_behavior = lambda opts, urls: pytest.fail("download() ne doit pas être appelé")
+
+    assert main.is_slideshow(URL, username=USERNAME) is False
+    assert main.download_video(URL, USERNAME, VIDEO_ID, retries=1) is True
+    assert FakeYDL.calls == 2                       # 1 extraction + 1 process_ie_result
+    assert len(FakeYDLReuse.process_calls) == 1
+    assert FakeYDLReuse.process_calls[0] is not main._info_cache.get(URL)  # copie profonde
+    assert URL not in main._info_cache             # consommé
+
+
+def test_download_falls_back_to_normal_path_when_reuse_fails(reuse_env):
+    user_dir = reuse_env["user_dir"]
+    FakeYDL.extract_behavior = lambda url: _video_info()
+    FakeYDLReuse.process_behavior = _raise(RuntimeError("boom"))
+
+    def fake_download(opts, urls):
+        with open(os.path.join(user_dir, f"20240101_{VIDEO_ID}.mp4"), "wb") as f:
+            f.write(b"data")
+        return 0
+    FakeYDL.download_behavior = fake_download
+
+    assert main.is_slideshow(URL, username=USERNAME) is False
+    assert main.download_video(URL, USERNAME, VIDEO_ID, retries=2) is True
+    assert len(FakeYDLReuse.process_calls) == 1     # une seule tentative via l'info en cache
+
+
+def test_cached_info_expires_and_is_bounded(reuse_env, monkeypatch):
+    main._info_cache_put(URL, {"id": "x"})
+    t0 = main.time.monotonic()
+    monkeypatch.setattr(main.time, "monotonic", lambda: t0 + main._INFO_CACHE_TTL + 1)
+    assert main._info_cache_pop(URL) is None        # expiré
+    monkeypatch.undo()
+    for i in range(main._INFO_CACHE_MAX + 10):
+        main._info_cache_put(f"u{i}", {"id": i})
+    assert len(main._info_cache) <= main._INFO_CACHE_MAX

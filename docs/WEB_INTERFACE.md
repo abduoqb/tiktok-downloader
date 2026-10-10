@@ -195,8 +195,8 @@ curl -X POST http://localhost:5000/api/download \
   -d '{
     "username": "antiheretique",
     "platform": "tiktok",
-    "min_sleep": 5,
-    "max_sleep": 15
+    "min_sleep": 2,
+    "max_sleep": 6
   }'
 ```
 
