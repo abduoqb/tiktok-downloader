@@ -2,6 +2,8 @@
 import os
 import subprocess
 import sys
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -43,20 +45,71 @@ class FakeYDL:
         return {"entries": list(FakeYDL.entries), "title": USER}
 
 
+class FakeProc:
+    """Faux Popen : stdout itérable, wait/poll/terminate/kill, returncode."""
+
+    def __init__(self, state):
+        self.state = state
+        self.returncode = None
+        self.terminated = False
+        self.killed = False
+        self._stop = threading.Event()
+        self.stdout = self._gen()
+
+    def _gen(self):
+        st = self.state
+        for chunk in st.stdout.splitlines(keepends=True):
+            if st.delay:
+                time.sleep(st.delay)
+            if self._stop.is_set():
+                return
+            yield chunk
+        if st.hang:  # n'émet plus rien, ne se termine que si on le tue
+            self._stop.wait(30)
+            return
+        if st.stderr:
+            yield st.stderr + "\n"
+        self.returncode = st.returncode
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):
+        if self.returncode is None:
+            self._stop.wait(timeout)
+            if self.returncode is None:
+                raise subprocess.TimeoutExpired("gallery-dl", timeout)
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = -15
+        self._stop.set()
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+        self._stop.set()
+
+
 @pytest.fixture
 def env(monkeypatch):
     FakeYDL.mode = "json_error"
     FakeYDL.entries = []
     monkeypatch.setattr(main.yt_dlp, "YoutubeDL", FakeYDL)
-    state = SimpleNamespace(cmds=[], stdout="", returncode=0, stderr="", exc=None)
+    state = SimpleNamespace(cmds=[], procs=[], stdout="", returncode=0, stderr="", exc=None,
+                            delay=0, hang=False)
 
-    def fake_run(cmd, **kwargs):
+    def fake_popen(cmd, **kwargs):
         state.cmds.append(cmd)
+        state.kwargs = kwargs
         if state.exc:
             raise state.exc
-        return subprocess.CompletedProcess(cmd, state.returncode, state.stdout, state.stderr)
+        proc = FakeProc(state)
+        state.procs.append(proc)
+        return proc
 
-    monkeypatch.setattr(main.subprocess, "run", fake_run)
+    monkeypatch.setattr(main.subprocess, "Popen", fake_popen)
     return state
 
 
@@ -153,10 +206,96 @@ def test_gallerydl_missing_raises(env):
         run()
 
 
-def test_gallerydl_timeout_raises(env):
-    env.exc = subprocess.TimeoutExpired("gallery-dl", 300)
-    with pytest.raises(RuntimeError):
+def test_stall_timeout_kills_process(env, monkeypatch):
+    monkeypatch.setattr(main, "GALLERYDL_STALL_TIMEOUT", 0.3)
+    env.hang = True
+    with pytest.raises(RuntimeError, match="ne répond plus depuis"):
         run()
+    assert env.procs[0].terminated or env.procs[0].killed
+
+
+def test_stall_after_entries_keeps_them(env, monkeypatch):
+    monkeypatch.setattr(main, "GALLERYDL_STALL_TIMEOUT", 0.3)
+    env.hang = True
+    env.stdout = listing("2", "1")
+    logs = []
+    out = run(callback_log=lambda m, level="info": logs.append((level, m)))
+    assert [v["id"] for v in out] == ["2", "1"]
+    assert any(l == "error" and "interrompu après 2" in m for l, m in logs)
+    assert env.procs[0].terminated
+
+
+def test_stall_error_mentions_entries_already_listed(env, monkeypatch):
+    monkeypatch.setattr(main, "GALLERYDL_STALL_TIMEOUT", 0.3)
+    env.hang = True
+    env.stdout = listing("2", "1")
+    gen = main._gallerydl_entries("https://www.tiktok.com/@x", None, 0, None, None)
+    assert next(gen)["id"] == "2" and next(gen)["id"] == "1"
+    with pytest.raises(RuntimeError, match="2 élément"):
+        next(gen)
+
+
+def test_total_timeout_kills_process(env, monkeypatch):
+    monkeypatch.setattr(main, "GALLERYDL_LIST_TIMEOUT", 0.4)
+    env.delay = 0.1  # sortie continue (pas d'inactivité) mais jamais finie
+    env.stdout = listing(*[str(i) for i in range(100)])
+    gen = main._gallerydl_entries("https://www.tiktok.com/@x", None, 0, None, None)
+    got = []
+    with pytest.raises(RuntimeError, match="délai total"):
+        for e in gen:
+            got.append(e)
+    assert 0 < len(got) < 100
+    assert env.procs[0].terminated or env.procs[0].killed
+
+
+def test_progressive_output(env):
+    env.delay = 0.05
+    env.stdout = listing("3", "2", "1")
+    gen = main._gallerydl_entries("https://www.tiktok.com/@x", None, 0, None, None)
+    first = next(gen)  # produit avant la fin du processus
+    assert first == {"id": "3", "url": vurl("3")}
+    assert env.procs[0].returncode is None
+    assert [e["id"] for e in gen] == ["2", "1"]
+
+
+def test_early_close_terminates_process(env):
+    env.hang = True
+    env.stdout = listing("3", "2", "1")
+    gen = main._gallerydl_entries("https://www.tiktok.com/@x", None, 0, None, None)
+    assert next(gen)["id"] == "3"
+    gen.close()
+    assert env.procs[0].terminated or env.procs[0].killed
+    assert not any(t.name == "gallerydl-reader" and t.is_alive() for t in threading.enumerate())
+
+
+def test_limit_stops_and_terminates_process(env):
+    env.hang = True
+    env.stdout = listing("3", "2", "1")
+    out = run(limit=1)
+    assert [v["id"] for v in out] == ["3"]
+    assert env.procs[0].terminated
+
+
+def test_nonzero_exit_after_entries_is_not_an_error(env):
+    env.stdout = listing("2", "1")
+    env.returncode = 1
+    env.stderr = "[tiktok][error] partial"
+    assert [v["id"] for v in run()] == ["2", "1"]
+
+
+def test_nonzero_exit_reports_last_error_line(env):
+    env.returncode = 4
+    env.stderr = "[tiktok][error] nope"
+    with pytest.raises(RuntimeError) as exc:
+        run()
+    assert "code 4" in str(exc.value) and "[tiktok][error] nope" in str(exc.value)
+
+
+def test_stderr_merged_into_stdout(env):
+    env.stdout = listing("1")
+    run()
+    assert env.kwargs["stderr"] == subprocess.STDOUT
+    assert env.kwargs["stdout"] == subprocess.PIPE
 
 
 def test_empty_profile_is_not_an_error(env):

@@ -9,6 +9,8 @@ import glob
 import shutil
 import re
 import tempfile
+import threading
+import queue
 from datetime import datetime
 from metadata_manager import OptimizedMetadataManager
 from ytdlp_options import build_ydl_opts, build_gallerydl_cookie_args
@@ -253,7 +255,8 @@ class _YtdlpErrorCapture:
         self.errors.append(str(msg))
 
 
-GALLERYDL_LIST_TIMEOUT = 300
+GALLERYDL_STALL_TIMEOUT = 300    # s sans aucune ligne de sortie avant d'abandonner
+GALLERYDL_LIST_TIMEOUT = 7200    # plafond total du listing (s)
 GALLERYDL_PRINT_FORMAT = 'https://www.tiktok.com/@{author[uniqueId]}/{type}/{id}'
 _TIKTOK_ITEM_RE = re.compile(r'https?://(?:www\.)?tiktok\.com/@[\w.\-]+/(?:video|photo)/(\d+)')
 
@@ -273,11 +276,37 @@ def _ytdlp_entries(url, ydl_opts, log, username):
             yield info
 
 
-def _gallerydl_entries(url, limit, history_size, cookies_file, cookies_browser):
-    """Listing gallery-dl (`--no-download -N`) : entrées brutes {'id','url'}, ordre conservé, sans doublon.
+def _stop_process(proc, grace=5):
+    """Termine proprement un processus (terminate, puis kill après `grace` s)."""
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            pass
+    except OSError:
+        pass
 
-    Lève RuntimeError si gallery-dl est absent, expire ou échoue sans rien renvoyer.
-    Un listing réussi sans aucune vidéo renvoie simplement une liste vide (profil vide).
+
+def _gallerydl_entries(url, limit, history_size, cookies_file, cookies_browser):
+    """Listing gallery-dl (`--no-download -N`) : GÉNÉRATEUR d'entrées brutes {'id','url'}.
+
+    Chaque entrée est produite dès que gallery-dl l'affiche (ordre conservé, sans doublon),
+    sans attendre la fin de la pagination. La sortie (stderr fusionné) est lue par un thread.
+
+    Délais : GALLERYDL_STALL_TIMEOUT (inactivité : aucune ligne de sortie) et
+    GALLERYDL_LIST_TIMEOUT (plafond total). Dépassement -> RuntimeError (le message précise
+    si des entrées avaient déjà été produites) et le processus est tué.
+
+    Erreurs : RuntimeError si gallery-dl est absent ou échoue (code != 0) sans rien renvoyer ;
+    code != 0 après des entrées déjà produites -> simple avertissement (entrées valides).
+    Un profil vide avec code 0 produit un générateur vide. Le processus est toujours terminé
+    et le thread lecteur joint à la fermeture du générateur (arrêt anticipé, exception).
     """
     # `-g` n'affiche que les URLs CDN (gallery-dl >= 1.30) : on imprime l'URL du post via --print,
     # sans rien télécharger (--no-download). Les lignes parasites sont filtrées par regex.
@@ -288,27 +317,74 @@ def _gallerydl_entries(url, limit, history_size, cookies_file, cookies_browser):
         cmd += ['--range', f'1-{limit + history_size}']
     cmd.append(url.rstrip('/') + '/posts')  # l'URL de profil nue ne liste que avatar/posts
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8',
-                                errors='replace', timeout=GALLERYDL_LIST_TIMEOUT)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding='utf-8', errors='replace')
     except FileNotFoundError:
         raise RuntimeError("gallery-dl n'est pas installé (pip install gallery-dl)")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f"gallery-dl a dépassé le délai de {GALLERYDL_LIST_TIMEOUT} s")
+
+    lines = queue.Queue()
+
+    def reader():
+        try:
+            for raw in proc.stdout:
+                lines.put(raw)
+        except Exception:
+            pass
+        finally:
+            lines.put(None)
+
+    thread = threading.Thread(target=reader, name='gallerydl-reader', daemon=True)
+    thread.start()
 
     seen = set()
-    entries = []
-    for line in (result.stdout or '').splitlines():
-        match = _TIKTOK_ITEM_RE.search(line.strip())
-        if not match or match.group(1) in seen:
-            continue
-        seen.add(match.group(1))
-        entries.append({'id': match.group(1), 'url': match.group(0)})
+    last_noise = ''
+    start = last_activity = time.monotonic()
+    try:
+        while True:
+            now = time.monotonic()
+            stall_left = GALLERYDL_STALL_TIMEOUT - (now - last_activity)
+            total_left = GALLERYDL_LIST_TIMEOUT - (now - start)
+            if stall_left <= 0:
+                extra = f" ({len(seen)} élément(s) déjà listé(s))" if seen else ""
+                raise RuntimeError(f"gallery-dl ne répond plus depuis {GALLERYDL_STALL_TIMEOUT} s{extra}")
+            if total_left <= 0:
+                extra = f" ({len(seen)} élément(s) déjà listé(s))" if seen else ""
+                raise RuntimeError(f"gallery-dl a dépassé le délai total de {GALLERYDL_LIST_TIMEOUT} s{extra}")
+            try:
+                raw = lines.get(timeout=max(0.01, min(stall_left, total_left, 0.5)))
+            except queue.Empty:
+                continue
+            if raw is None:
+                break
+            last_activity = time.monotonic()
+            line = raw.strip()
+            match = _TIKTOK_ITEM_RE.search(line)
+            if not match:
+                if line:
+                    last_noise = line
+                continue
+            if match.group(1) in seen:
+                continue
+            seen.add(match.group(1))
+            yield {'id': match.group(1), 'url': match.group(0)}
 
-    if result.returncode != 0 and not entries:
-        detail = (result.stderr or '').strip().splitlines()
-        raise RuntimeError(f"gallery-dl a échoué (code {result.returncode})"
-                           + (f" : {detail[-1]}" if detail else ""))
-    return entries
+        try:
+            returncode = proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            returncode = proc.poll() if proc.poll() is not None else -1
+        if returncode != 0:
+            if not seen:
+                raise RuntimeError(f"gallery-dl a échoué (code {returncode})"
+                                   + (f" : {last_noise}" if last_noise else ""))
+            print(f"[WARNING] gallery-dl a terminé avec le code {returncode} après "
+                  f"{len(seen)} élément(s) : listing conservé")
+    finally:
+        _stop_process(proc)
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+        thread.join(timeout=5)
 
 
 def _filter_entries(entries, history, limit, force_update, log):
@@ -431,16 +507,29 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
                            "Vérifiez les cookies et que le compte existe.")
 
     log("yt-dlp ne peut plus lister ce profil, repli sur gallery-dl", "warning")
-    try:
-        entries = _gallerydl_entries(url, limit, len(history), cookies_file, cookies_browser)
-    except RuntimeError as e:
-        raise RuntimeError(
-            f"Listing impossible pour @{username} : yt-dlp ({ytdlp_error}) et gallery-dl ({e}) "
-            "ont échoué. Vérifiez les cookies (tiktok.com_cookies.txt) et que le compte existe."
-        ) from e
+    # Consommation paresseuse : chaque entrée est traitée dès que gallery-dl l'affiche.
+    # Erreur AVANT toute entrée -> RuntimeError combinée yt-dlp + gallery-dl.
+    # Erreur APRÈS des entrées -> loggée en erreur, on garde ce qui a déjà été produit.
+    gdl_count = [0]
 
-    log(f"gallery-dl a listé {len(entries)} élément(s)", "info")
-    found = yield from _filter_entries(entries, history, limit, force_update, log)
+    def gdl_tracked():
+        for entry in _gallerydl_entries(url, limit, len(history), cookies_file, cookies_browser):
+            gdl_count[0] += 1
+            yield entry
+
+    try:
+        found = yield from _filter_entries(gdl_tracked(), history, limit, force_update, log)
+    except RuntimeError as e:
+        if gdl_count[0] == 0:
+            raise RuntimeError(
+                f"Listing impossible pour @{username} : yt-dlp ({ytdlp_error}) et gallery-dl ({e}) "
+                "ont échoué. Vérifiez les cookies (tiktok.com_cookies.txt) et que le compte existe."
+            ) from e
+        log(f"gallery-dl interrompu après {gdl_count[0]} élément(s) : {e}. "
+            "Les éléments déjà listés sont conservés.", "error")
+        return
+
+    log(f"gallery-dl a listé {gdl_count[0]} élément(s)", "info")
     log(f"Extraction finished. Found {found} new videos.", "success")
 
 
