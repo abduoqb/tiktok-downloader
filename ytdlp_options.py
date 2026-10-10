@@ -18,6 +18,8 @@ _PURPOSES = {
     # Préfère H.264 (avc1), repli sur le meilleur format disponible
     "download": {
         'format': 'bestvideo[vcodec^=avc1]+bestaudio/best[vcodec^=avc1]/best',
+        # Conteneur mp4 même si le repli n'est pas H.264 (ensure_h264 le convertit ensuite)
+        'merge_output_format': 'mp4',
         'quiet': False,
         'ignoreerrors': True,
         'restrictfilenames': True,

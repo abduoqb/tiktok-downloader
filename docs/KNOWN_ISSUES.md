@@ -76,6 +76,18 @@ Configuration corrigée dans `main.py`:
 
 ## 📋 Améliorations futures
 
+### Conversion des anciens téléchargements HEVC en H.264
+**Priorité**: Moyenne (tâche reportée)
+
+Environ 1 490 vidéos téléchargées avant la garantie H.264 sont en HEVC (H.265) et
+s'affichent en noir (son seul) dans le navigateur. Profils les plus touchés :
+`ferdaus_bbzk` (350), `ss0hane` (299), `okmanny___` (167), `bebeta.n` (131),
+`chayy.922` (114), `nabila_akk` (114), `toomochelucile` (111).
+
+**Suggestion**: script `scripts/reencode_hevc.py` réutilisant `main.ensure_h264`,
+avec `--dry-run`, `--user` (commencer par `bebeta.n` pour valider), reprise
+possible (fichiers déjà convertis sautés). Compter plusieurs heures de calcul.
+
 ### UX: Barre de progression en temps réel
 **Priorité**: Basse
 

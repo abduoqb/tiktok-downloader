@@ -402,24 +402,9 @@ def sanitize_filename(filename):
     filename = filename.strip('_')
     return filename
 
-def ensure_h264(file_path):
-    """Check if a video file uses H.264 codec, re-encode if not.
-    
-    Uses ffprobe to detect codec, then ffmpeg to re-encode only when needed.
-    This guarantees browser compatibility (no black screen with sound).
-    
-    Returns:
-        str: Path to the (possibly re-encoded) file
-    """
-    if not file_path or not os.path.exists(file_path):
-        return file_path
-    
-    if not file_path.lower().endswith('.mp4'):
-        return file_path
-
-    temp_path = None
+def get_video_codec(file_path):
+    """Return the codec name of the first video stream (lowercase), or None if unknown."""
     try:
-        # Detect video codec with ffprobe
         result = subprocess.run(
             [
                 'ffprobe', '-v', 'error',
@@ -430,20 +415,57 @@ def ensure_h264(file_path):
             ],
             capture_output=True, text=True, timeout=15
         )
-        
-        codec = result.stdout.strip().lower()
-        
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    return result.stdout.strip().lower() or None
+
+
+def ensure_h264(file_path):
+    """Make sure a video file is an H.264 mp4 playable in every browser.
+
+    Uses ffprobe to detect the codec, then ffmpeg to re-encode only when needed
+    (HEVC/AV1/VP9 would give a black screen with sound). Other containers
+    (mkv, webm, mov) are converted to mp4. The output is forced to 8-bit
+    yuv420p, the only pixel format all browsers decode.
+
+    Returns:
+        str: Path to the final file (same path, or the .mp4 path if the
+        container changed). The original is kept if anything fails.
+    """
+    if not file_path or not os.path.exists(file_path):
+        return file_path
+
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in ('.mp4', '.mkv', '.webm', '.mov'):
+        return file_path
+
+    temp_path = None
+    try:
+        codec = get_video_codec(file_path)
+
         if not codec:
             print(f"[H264] Could not detect codec for {os.path.basename(file_path)}")
             return file_path
-        
-        # H.264 compatible codecs - no re-encoding needed
-        if codec in ('h264', 'avc1', 'avc'):
+
+        is_h264 = codec in ('h264', 'avc1', 'avc')
+
+        # H.264 already in an mp4: nothing to do
+        if is_h264 and ext == '.mp4':
             return file_path
-        
-        # Need re-encoding
-        print(f"[H264] Re-encoding {os.path.basename(file_path)} ({codec} → h264)...")
-        
+
+        target_path = os.path.splitext(file_path)[0] + '.mp4'
+        if is_h264:
+            print(f"[H264] Remuxing {os.path.basename(file_path)} ({ext} -> .mp4)...")
+            video_args = ['-c:v', 'copy']
+        else:
+            print(f"[H264] Re-encoding {os.path.basename(file_path)} ({codec} -> h264)...")
+            video_args = [
+                '-c:v', 'libx264',      # Re-encode video to H.264
+                '-preset', 'fast',      # Good speed/quality balance
+                '-crf', '23',           # Visual quality (lower = better, 23 = default)
+                '-pix_fmt', 'yuv420p',  # 8-bit 4:2:0, required for browser playback
+            ]
+
         # Unique temp file in the same directory (os.replace must stay on the same volume)
         base_name = os.path.splitext(os.path.basename(file_path))[0]
         fd, temp_path = tempfile.mkstemp(prefix=f"{base_name}.", suffix='.tmp.mp4',
@@ -454,27 +476,27 @@ def ensure_h264(file_path):
             [
                 'ffmpeg', '-y',
                 '-i', file_path,
-                '-c:v', 'libx264',      # Re-encode video to H.264
-                '-preset', 'fast',       # Good speed/quality balance
-                '-crf', '23',            # Visual quality (lower = better, 23 = default)
-                '-c:a', 'aac',           # Ensure audio is AAC
+                *video_args,
+                '-c:a', 'aac',             # Ensure audio is AAC
                 '-movflags', '+faststart', # Web-optimized: metadata at start
                 '-v', 'warning',
                 temp_path
             ],
-            capture_output=True, text=True, timeout=300
+            capture_output=True, text=True, timeout=900
         )
-        
+
         if result.returncode == 0 and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
             # Atomic replace: original is only overwritten once the new file is valid
-            os.replace(temp_path, file_path)
+            os.replace(temp_path, target_path)
             temp_path = None
-            print(f"[H264] Re-encoded successfully: {os.path.basename(file_path)}")
-        else:
-            print(f"[H264] Re-encoding failed, keeping original ({codec})")
-            if result.stderr:
-                print(f"[H264] ffmpeg error: {result.stderr[:200]}")
+            if target_path != file_path:
+                os.remove(file_path)
+            print(f"[H264] Converted successfully: {os.path.basename(target_path)}")
+            return target_path
 
+        print(f"[H264] Conversion failed, keeping original ({codec})")
+        if result.stderr:
+            print(f"[H264] ffmpeg error: {result.stderr[:200]}")
         return file_path
 
     except FileNotFoundError:
@@ -590,8 +612,12 @@ def download_video(video_url, username, video_id, retries=3, cookies_browser=Non
         return False
 
     # Post-process (once, after a successful download): ensure H.264 for browser compatibility
-    for mp4_file in find_downloaded_videos(username, video_id, extensions=('mp4',)):
-        ensure_h264(mp4_file)
+    for video_file in find_downloaded_videos(username, video_id):
+        final_path = ensure_h264(video_file)
+        codec = get_video_codec(final_path) if final_path else None
+        if codec and codec not in ('h264', 'avc1', 'avc'):
+            print(f"[H264] WARNING: {os.path.basename(final_path)} is still {codec}: "
+                  f"it will show a black screen in browsers (ffmpeg missing or conversion failed)")
 
     # Post-process: organize slideshows
     try:
