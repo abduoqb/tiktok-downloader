@@ -98,7 +98,8 @@ Actuellement, les logs SSE montrent la progression mais pas de barre visuelle.
 ---
 
 ### Télécharger au fil du listing (flux continu) plutôt qu'en deux temps
-**Priorité**: Moyenne (idée mise de côté)
+**Priorité**: Moyenne (tâche reportée)
+**Décision**: flux continu retenu (pas de lots de 10).
 
 Aujourd'hui l'appli liste tout le profil puis télécharge. Sur un gros profil :
 longue attente avant le premier téléchargement, listing gallery-dl coupé par le
