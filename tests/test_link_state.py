@@ -154,3 +154,55 @@ def test_str_int_normalisation(tmp_path):
     assert st.status("123") == "ignored" and st.status(123) == "ignored"
     assert "123" in st.items()
     assert st.restore("123") is True
+
+
+# ---------------------------------------------------------------- fusion a l'ecriture
+
+
+def test_ignore_pose_ailleurs_n_est_pas_perdu(tmp_path):
+    """Un import long (instance A) ne doit pas effacer une ignorance ajoutee par l'instance B."""
+    from link_state import LinkState
+    a = LinkState.load(tmp_path)          # instance de longue duree (import)
+    b = LinkState.load(tmp_path)          # suppression depuis la page profil
+    b.ignore("7000000000000000001", "supprimee par l'utilisateur")
+    assert b.save()
+
+    a.record_failure("7000000000000000002", "transient", "HTTP 403")
+    assert a.save()
+
+    final = LinkState.load(tmp_path)
+    assert final.status("7000000000000000001") == "ignored"
+    assert final.status("7000000000000000002") == "retry"
+    # La vue en memoire de A a rejoint l'etat fusionne
+    assert a.status("7000000000000000001") == "ignored"
+
+
+def test_echec_ne_remplace_pas_une_ignorance_posee_ailleurs(tmp_path):
+    from link_state import LinkState
+    a = LinkState.load(tmp_path)
+    b = LinkState.load(tmp_path)
+    b.ignore("7000000000000000003")
+    b.save()
+
+    a.record_failure("7000000000000000003", "permanent", "supprimee")  # A ne sait pas
+    a.save()
+
+    assert LinkState.load(tmp_path).status("7000000000000000003") == "ignored"
+
+
+def test_restore_ailleurs_puis_save_ne_ressuscite_pas(tmp_path):
+    from link_state import LinkState
+    seed = LinkState.load(tmp_path)
+    seed.ignore("7000000000000000004")
+    seed.save()
+
+    a = LinkState.load(tmp_path)
+    b = LinkState.load(tmp_path)
+    assert b.restore("7000000000000000004")
+    b.save()
+    a.record_failure("7000000000000000005", "transient", "timeout")
+    a.save()
+
+    final = LinkState.load(tmp_path)
+    assert final.status("7000000000000000004") is None
+    assert final.status("7000000000000000005") == "retry"

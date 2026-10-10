@@ -5,6 +5,19 @@ Tous les changements notables de ce projet seront documentés dans ce fichier.
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [1.12.0] - 2026-10-10
+
+### Ajouté
+- **Import en deux temps** : `POST /api/import/preview` (analyse locale en lecture seule : déjà téléchargées, trouvées sur le disque, nouvelles, à retenter, en attente, ignorées, indisponibles, doublons, lignes illisibles, durée estimée) puis import avec `plan_hash` (409 `plan_changed` si les données ont changé, 400 `destination_required`). Tout est rangé dans un seul dossier de destination par défaut ; « Un dossier par compte » reste disponible.
+- `links_import.build_plan` : construction unique et pure du plan, partagée par l'interface web et la CLI.
+- Vidéos ignorées : supprimer une vidéo l'ajoute à l'historique des ignorées (`link_state.json`) ; routes `GET /api/profile/<u>/ignored` et `POST /api/profile/<u>/restore`, panneau « Vidéos ignorées (N) » sur la page du profil.
+- Panneau Activité : compteurs adoptées, indisponibles, à retenter, ignorées, déjà téléchargées (affichés seulement s'ils sont non nuls).
+
+### Modifié
+- `delete_video` extrait l'id avec `disk_index.parse_filename` (toutes extensions, ids de 15 à 20 chiffres, pseudos avec `_` et `.`) ; avertissement si aucun id n'est extractible.
+- Une vidéo devenue indisponible n'est plus comptée comme un échec ; l'en-tête de statistiques ne compte que les succès de l'historique.
+- « Tout rescanner » retente aussi les indisponibles et les essais en attente à l'import.
+
 ## [1.11.0] - 2026-10-10
 
 ### Modifié

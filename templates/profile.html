@@ -20,6 +20,13 @@
     }
     .icon-chip:hover { border-color: var(--ink); }
     .icon-chip.danger:hover { border-color: var(--rose); color: var(--rose); }
+    .btn[hidden] { display: none; }
+    .ign-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 12px 16px; border-top: 1px solid var(--line); min-width: 0; }
+    .ign-row:first-child { border-top: 0; }
+    .ign-main { min-width: 0; flex: 1 1 240px; }
+    .ign-id { font-weight: 800; color: var(--ink); overflow-wrap: anywhere; }
+    a.ign-id:hover { color: var(--violet); text-decoration: underline; }
+    .ign-meta { color: var(--mute); font-size: 13px; overflow-wrap: anywhere; }
 </style>
 {% endblock %}
 
@@ -63,6 +70,22 @@
     </section>
 
     <div id="syncMessage" role="status" aria-live="polite" class="hidden border-2 bg-panel2 p-4 text-sm font-bold"></div>
+
+    <!-- Vidéos ignorées (supprimées par l'utilisateur) : restaurables -->
+    <section id="ignoredSection" hidden aria-label="Vidéos ignorées">
+        <button type="button" id="ignoredToggle" class="btn btn-sm" aria-expanded="false" aria-controls="ignoredPanel">Vidéos ignorées (<span id="ignoredCount">0</span>)</button>
+        <div id="ignoredPanel" class="panel mt-4" hidden>
+            <div class="panel-head flex-wrap">
+                <div class="min-w-0">
+                    <h2 class="h-section">Vidéos ignorées</h2>
+                    <p class="text-dim text-sm mt-1">Ces vidéos ont été supprimées par vous : elles ne sont jamais retéléchargées. Les vidéos restaurées seront retéléchargées à la prochaine mise à jour.</p>
+                </div>
+                <button type="button" id="restoreAllBtn" class="btn btn-sm btn-go">Tout restaurer</button>
+            </div>
+            <div id="ignoredStatus" role="status" aria-live="polite" class="px-5 py-2 text-sm font-bold text-lime" hidden></div>
+            <ul id="ignoredList" class="max-h-[60vh] overflow-y-auto"></ul>
+        </div>
+    </section>
 
     <div id="videosContainer">
         {% if profile.videos %}
@@ -209,11 +232,12 @@
         }
 
         async function deleteVideo(filename) {
-            if (!confirm('Supprimer définitivement ' + filename + ' ?')) return;
+            if (!confirm('Supprimer définitivement ' + filename + ' ?\n\nLa vidéo ne sera plus retéléchargée. Vous pourrez la restaurer depuis « Vidéos ignorées ».')) return;
             try {
                 const response = await fetch('/api/video/{{ profile.username }}/' + encodeURIComponent(filename) + '/delete', { method: 'DELETE' });
                 const data = await response.json();
                 if (data.success) {
+                    if (data.warning) { alert(data.warning); }
                     location.reload();
                 } else {
                     showNotification(data.error || 'Suppression impossible.', 'error');
@@ -222,6 +246,107 @@
                 showNotification('Erreur : ' + error.message, 'error');
             }
         }
+
+
+        // --- Vidéos ignorées : liste, restauration ---
+        const PROFILE = {{ profile.username|tojson }};
+        const ignoredApi = '/api/profile/' + encodeURIComponent(PROFILE);
+        let ignoredCount = 0;
+
+        function mk(tag, cls, text) {
+            const el = document.createElement(tag);
+            if (cls) el.className = cls;
+            if (text !== undefined) el.textContent = text;
+            return el;
+        }
+
+        function ignoredStatus(text) {
+            const box = document.getElementById('ignoredStatus');
+            box.textContent = text;
+            box.hidden = !text;
+        }
+
+        function setIgnoredCount(n) {
+            ignoredCount = n;
+            document.getElementById('ignoredCount').textContent = String(n);
+            document.getElementById('ignoredToggle').hidden = n === 0;
+            document.getElementById('restoreAllBtn').hidden = n === 0;
+            document.getElementById('ignoredSection').hidden = n === 0 && document.getElementById('ignoredStatus').hidden;
+            const list = document.getElementById('ignoredList');
+            if (n === 0 && !list.children.length) list.append(mk('li', 'ign-row text-dim', 'Aucune vidéo ignorée.'));
+        }
+
+        function fmtDate(iso) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            return isNaN(d) ? '' : d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+        }
+
+        function ignoredRow(item) {
+            const li = mk('li', 'ign-row');
+            li.dataset.id = item.id;
+            const main = mk('div', 'ign-main');
+            const link = mk('a', 'ign-id', item.id);
+            link.href = item.url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.title = 'Ouvrir la vidéo sur TikTok';
+            const meta = [item.reason || 'ignorée', fmtDate(item.date)].filter(Boolean).join(' · ');
+            main.append(link, mk('div', 'ign-meta', meta));
+            const btn = mk('button', 'btn btn-sm', 'Restaurer');
+            btn.type = 'button';
+            btn.setAttribute('aria-label', 'Restaurer la vidéo ' + item.id);
+            btn.addEventListener('click', () => restoreIgnored([item.id], btn));
+            li.append(main, btn);
+            return li;
+        }
+
+        async function loadIgnored() {
+            try {
+                const res = await fetch(ignoredApi + '/ignored', { cache: 'no-store' });
+                if (!res.ok) return;
+                const data = await res.json();
+                document.getElementById('ignoredList').replaceChildren(...(data.items || []).map(ignoredRow));
+                setIgnoredCount(data.count || 0);
+            } catch (e) { /* la section reste masquée */ }
+        }
+
+        async function restoreIgnored(ids, btn) {
+            if (btn) btn.disabled = true;
+            try {
+                const res = await fetch(ignoredApi + '/restore', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(ids === null ? { all: true } : { ids })
+                });
+                const data = await res.json();
+                if (!res.ok) { ignoredStatus(data.error || 'Restauration impossible.'); if (btn) btn.disabled = false; return; }
+                const list = document.getElementById('ignoredList');
+                (data.ids || []).forEach((id) => {
+                    const row = list.querySelector('[data-id="' + id + '"]');
+                    if (row) row.remove();
+                });
+                const n = data.restored || 0;
+                ignoredStatus(n === 0 ? 'Rien à restaurer.' :
+                    (n > 1 ? n + ' vidéos restaurées' : '1 vidéo restaurée') + '. Elles seront retéléchargées à la prochaine mise à jour.');
+                setIgnoredCount(Math.max(0, ignoredCount - n));
+                const next = list.querySelector('button');
+                if (ignoredCount > 0 && next) next.focus();
+                else document.getElementById('ignoredPanel').focus();
+            } catch (e) {
+                ignoredStatus('Serveur injoignable : ' + e.message);
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        document.getElementById('ignoredToggle').addEventListener('click', () => {
+            const panel = document.getElementById('ignoredPanel');
+            panel.hidden = !panel.hidden;
+            document.getElementById('ignoredToggle').setAttribute('aria-expanded', String(!panel.hidden));
+        });
+        document.getElementById('restoreAllBtn').addEventListener('click', () => {
+            if (confirm('Restaurer toutes les vidéos ignorées (' + ignoredCount + ') ?')) restoreIgnored(null, document.getElementById('restoreAllBtn'));
+        });
+        document.getElementById('ignoredPanel').tabIndex = -1;
 
         // --- Lecture ---
         function setOverlay(video, visible) {
@@ -281,6 +406,7 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            loadIgnored();
             initLazyLoading();
             try { if (localStorage.getItem('profileView') === 'list') switchView('list'); } catch (e) {}
 

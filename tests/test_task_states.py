@@ -358,7 +358,8 @@ def test_api_tasks_sorting_and_serialization(client, monkeypatch):
                 "total", "size_mb", "problems", "last_message", "summary"):
         assert key in first
     assert set(first["counts"]) == {"listed", "done", "videos", "slideshows", "failed",
-                                    "unknown", "skipped"}
+                                    "unknown", "skipped", "known", "adopted", "ignored",
+                                    "unavailable", "retry_waiting", "retried"}
     assert first["elapsed_s"] == 10.0 and first["total"] is None
 
 
@@ -409,3 +410,80 @@ def test_index_has_activity_panel(client):
     assert "Activité" in html and "Détails techniques" in html
     assert "/api/tasks" in html and "Journal en direct" not in html
     assert "Aucune tâche en cours" in html
+
+
+# ---------------------------------------------------------------- nouveaux compteurs du tri
+
+def test_unavailable_result_is_not_counted_as_failed(client):
+    web_app.set_task_state("bob", "import")
+    web_app._apply_progress("bob", "item_done", {"success": False, "type": "unavailable",
+                                                 "done": 1, "total": 3})
+    web_app._apply_progress("bob", "item_done", {"success": False, "type": "video", "done": 2})
+    counts = _state("bob")["counts"]
+    assert counts["unavailable"] == 1 and counts["failed"] == 1 and counts["done"] == 2
+
+
+def test_summary_carries_triage_counters_and_separates_unavailable(client):
+    stats = _stats(failed=3, skipped=14, known=6, adopted=4, ignored=2, unavailable=1,
+                   retry_waiting=1, retried=2, marked_unavailable=1,
+                   results=[{"type": "unavailable"}, {"type": "video"}, {"type": "video"}])
+    summary = web_app._summary_from_stats(stats)
+    assert summary["failed"] == 2 and summary["unavailable"] == 2
+    assert (summary["known"], summary["adopted"], summary["ignored"]) == (6, 4, 2)
+    assert (summary["retry_waiting"], summary["retried"]) == (1, 2)
+
+
+def test_triage_counters_reach_the_task_state_and_log(client, monkeypatch):
+    logs = []
+    monkeypatch.setattr(web_app, "emit_log", lambda msg, *a, **k: logs.append(msg))
+    stats = _stats(videos=1, downloaded=1, processed=1, skipped=5, adopted=3, ignored=1,
+                   unavailable=1, retry_waiting=2)
+    monkeypatch.setattr(orchestrator, "run_import", lambda username, items, **kw: stats)
+    web_app.background_import_task([("bob", [{"id": "1", "url": "u"}])], 0, 0)
+    counts = _state("bob")["counts"]
+    assert (counts["adopted"], counts["ignored"], counts["unavailable"],
+            counts["retry_waiting"]) == (3, 1, 1, 2)
+    text = "\n".join(logs)
+    assert "Adoptées depuis le disque" in text and "Indisponibles" in text
+    assert "Ignorées" in text and "En attente d'un essai" in text
+
+
+def test_summary_log_hides_zero_triage_counters(client, monkeypatch):
+    logs = []
+    monkeypatch.setattr(web_app, "emit_log", lambda msg, *a, **k: logs.append(msg))
+    web_app.emit_download_summary("bob", _stats(videos=1, downloaded=1, processed=1))
+    text = "\n".join(logs)
+    assert "Adoptées" not in text and "Indisponibles" not in text
+
+
+def test_stats_header_lists_nonzero_counters_only(client, monkeypatch):
+    logs = []
+    monkeypatch.setattr(web_app, "emit_log", lambda msg, *a, **k: logs.append(msg))
+    web_app.emit_stats_header("bob", "TIKTOK", 10, 4, 6, "x", 2, 6, adopted=3, unavailable=1)
+    text = "\n".join(logs)
+    assert "Adoptées depuis le disque" in text and "Indisponibles" in text
+    assert "Ignorées" not in text and "À retenter" not in text
+
+
+def test_download_header_counts_only_successes(client, monkeypatch, tmp_path):
+    folder = tmp_path / "downloads" / "bob"
+    folder.mkdir(parents=True)
+    (folder / "metadata.json").write_text(json.dumps({
+        "1": {"success": True}, "2": {"success": True}, "3": {"success": False}}))
+    seen = {}
+    monkeypatch.setattr(web_app, "emit_stats_header",
+                        lambda **kw: seen.update(kw))
+
+    def fake(username, platform="tiktok", progress=None, **kw):
+        progress("extraction_done", {"total": 4})
+        return _stats()
+
+    monkeypatch.setattr(orchestrator, "run_download", fake)
+    web_app.background_download_task("bob", "tiktok", 0, 0)
+    assert seen["already_downloaded"] == 2
+
+
+def test_index_activity_panel_knows_new_counters(client):
+    html = client.get("/").get_data(as_text=True)
+    for fragment in ("adopted", "unavailable", "retry_waiting", "indisponible", "adoptée"):
+        assert fragment in html

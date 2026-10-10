@@ -30,6 +30,11 @@ from main import (
 import ytdlp_options
 import orchestrator
 import links_import
+import main
+import disk_index
+import link_state
+import triage
+import hashlib
 
 MAX_IMPORT_LINKS = 5000
 
@@ -142,8 +147,11 @@ def emit_log(message, level="info", module="SYSTEM"):
         # Si vraiment tout échoue, on ignore silencieusement
         pass
 
-def emit_stats_header(username, platform, total_videos, already_downloaded, new_videos, mode, min_sleep, max_sleep):
-    """Affiche les statistiques initiales avant le téléchargement"""
+def emit_stats_header(username, platform, total_videos, already_downloaded, new_videos, mode,
+                      min_sleep, max_sleep, adopted=0, ignored=0, unavailable=0, retry_waiting=0):
+    """Affiche les statistiques initiales avant le téléchargement.
+
+    adopted / ignored / unavailable / retry_waiting ne sont affichés que s'ils sont non nuls."""
     separator = "=" * 68
 
     emit_log(separator, "info", "STATS")
@@ -156,6 +164,11 @@ def emit_stats_header(username, platform, total_videos, already_downloaded, new_
     emit_log(f"  Vidéos sur le profil:           {total_videos}", "info", "STATS")
     emit_log(f"  Déjà téléchargées:              {already_downloaded}", "info", "STATS")
     emit_log(f"  Nouvelles détectées:            {new_videos}", "info", "STATS")
+    for label, value in (("Adoptées depuis le disque:", adopted), ("Ignorées (supprimées):",
+                         ignored), ("Indisponibles:", unavailable),
+                         ("À retenter plus tard:", retry_waiting)):
+        if value:
+            emit_log(f"  {label:<32}{value}", "info", "STATS")
     emit_log("", "info", "STATS")
 
     emit_log("Configuration:", "info", "STATS")
@@ -222,7 +235,8 @@ _task_lock = threading.RLock()
 MAX_PROBLEMS = 5
 MAX_MESSAGE_LEN = 300
 _RUNNING_STATUSES = ("running", "stopping")
-_COUNT_KEYS = ("listed", "done", "videos", "slideshows", "failed", "unknown", "skipped")
+_COUNT_KEYS = ("listed", "done", "videos", "slideshows", "failed", "unknown", "skipped",
+               "known", "adopted", "ignored", "unavailable", "retry_waiting", "retried")
 # Chemins de fichiers (cookies, .txt) masqués dans les messages exposés par l'API
 _PATH_RE = re.compile(r"(?:[A-Za-z]:)?[\\/][^\s'\"]*(?:cookie|\.txt)[^\s'\"]*", re.IGNORECASE)
 
@@ -419,8 +433,12 @@ def _apply_progress(username, event, data):
         elif event == "item_done":
             if data.get("success"):
                 key = "slideshows" if data.get("type") == "slideshow" else "videos"
+            elif data.get("type") == "unknown":
+                key = "unknown"
+            elif data.get("type") == "unavailable":
+                key = "unavailable"   # supprimée / privée : ni un échec ni à retenter
             else:
-                key = "unknown" if data.get("type") == "unknown" else "failed"
+                key = "failed"
             counts[key] += 1
             done = data.get("done")
             counts["done"] = done if isinstance(done, int) else counts["done"] + 1
@@ -441,21 +459,35 @@ def _apply_progress(username, event, data):
             state["listing_active"] = False
             state["phase"] = "finishing"
             state["pause_s"] = None
-            for key in ("videos", "slideshows", "failed", "unknown", "skipped"):
+            for key in ("videos", "slideshows", "failed", "unknown", "skipped", "known",
+                        "adopted", "ignored", "retry_waiting", "retried"):
                 if isinstance(data.get(key), int):
                     counts[key] = data[key]
+            if isinstance(data.get("unavailable"), int):
+                counts["unavailable"] = max(counts["unavailable"], data["unavailable"]
+                                            + (data.get("marked_unavailable") or 0))
             if isinstance(data.get("size_mb"), (int, float)):
                 state["size_mb"] = round(data["size_mb"], 2)
         state["updated_at"] = _now()
 
 
 def _summary_from_stats(stats):
-    """Résumé final (dict JSON) à partir des statistiques de l'orchestrateur."""
+    """Résumé final (dict JSON) à partir des statistiques de l'orchestrateur.
+
+    `failed` ne compte pas les éléments devenus indisponibles (type 'unavailable') : ils sont
+    comptés à part dans `unavailable` (avec ceux déjà indisponibles avant le run)."""
     error = _clean_message(stats.get("extraction_error"))
+    gone = sum(1 for r in (stats.get("results") or [])
+               if isinstance(r, dict) and r.get("type") == "unavailable")
     return {
         "videos": stats.get("videos", 0), "slideshows": stats.get("slideshows", 0),
-        "failed": stats.get("failed", 0), "unknown": stats.get("unknown", 0),
+        "failed": max(0, (stats.get("failed", 0) or 0) - gone),
+        "unknown": stats.get("unknown", 0),
         "skipped": stats.get("skipped", 0), "downloaded": stats.get("downloaded", 0),
+        "known": stats.get("known", 0), "adopted": stats.get("adopted", 0),
+        "ignored": stats.get("ignored", 0),
+        "unavailable": (stats.get("unavailable", 0) or 0) + (stats.get("marked_unavailable", 0) or 0),
+        "retry_waiting": stats.get("retry_waiting", 0), "retried": stats.get("retried", 0),
         "processed": stats.get("processed", 0),
         "total_extracted": stats.get("total_extracted", 0),
         "size_mb": round(stats.get("size_mb", 0.0) or 0.0, 2),
@@ -742,45 +774,190 @@ def start_download():
         'message': f'Download started for @{username}'
     })
 
-@app.route('/api/import', methods=['POST'])
-def start_import():
-    """Importe une liste de liens (texte libre) et les télécharge via orchestrator.run_import."""
-    data = request.get_json(silent=True)
+IMPORT_MODES = ('single', 'by_author')
+MAX_SAMPLES = 20
+_USERNAME_ERROR = 'Pseudo invalide : lettres, chiffres, point, tiret et tiret bas uniquement.'
+
+
+def _import_error(message, status=400, **extra):
+    return jsonify({'error': message, **extra}), status
+
+
+def _clean_pseudo(value):
+    """Pseudo saisi : '' / None -> None ; sinon texte sans @ (validé par l'appelant)."""
+    if isinstance(value, str):
+        value = value.strip().lstrip('@')
+    return None if value in (None, '') else value
+
+
+def _pseudo_counts(groups):
+    """{pseudo (casse de la première URL): nombre de liens}, dans l'ordre d'apparition."""
+    return {items[0]['username']: len(items) for items in groups.values() if items}
+
+
+def _prepare_import(data, default_mode):
+    """Validations communes à l'aperçu et à l'import.
+
+    Retourne (None, ctx) ou (réponse d'erreur, None). ctx : groups, report, total, mode,
+    destination (None si à choisir), pseudos, suggested, force_update, min_sleep, max_sleep.
+    """
     if not isinstance(data, dict):
-        return jsonify({'error': 'Corps JSON attendu'}), 400
+        return _import_error('Corps JSON attendu'), None
     text = data.get('text')
     if not isinstance(text, str) or not text.strip():
-        return jsonify({'error': 'Collez au moins un lien de vidéo TikTok.'}), 400
+        return _import_error('Collez au moins un lien de vidéo TikTok.'), None
 
-    forced = data.get('username')
-    if isinstance(forced, str):
-        forced = forced.strip().lstrip('@')
-    if forced in (None, ''):
-        forced = None
-    elif not isinstance(forced, str) or not links_import.is_valid_username(forced):
-        return jsonify({'error': 'Pseudo invalide : lettres, chiffres, point, tiret et '
-                                 'tiret bas uniquement.'}), 400
+    # `username` : ancien nom du champ « destination » (imposait un dossier unique)
+    dest = _clean_pseudo(data.get('destination'))
+    if dest is None:
+        dest = _clean_pseudo(data.get('username'))
+    if dest is not None and (not isinstance(dest, str) or not links_import.is_valid_username(dest)):
+        return _import_error(_USERNAME_ERROR), None
+
+    mode = data.get('mode')
+    if mode is None:
+        mode = 'single' if (dest and default_mode == 'by_author') else default_mode
+    if mode not in IMPORT_MODES:
+        return _import_error("Mode inconnu : choisissez « single » ou « by_author »."), None
 
     groups, report = links_import.parse_links(text)
     total = sum(len(items) for items in groups.values())
     if total == 0:
-        return jsonify({'error': 'Aucun lien de vidéo TikTok valide trouvé. Format attendu : '
-                                 'https://www.tiktok.com/@pseudo/video/123...',
-                        'ignored': report['ignored'], 'invalid': report['invalid']}), 400
+        return _import_error('Aucun lien de vidéo TikTok valide trouvé. Format attendu : '
+                             'https://www.tiktok.com/@pseudo/video/123...',
+                             ignored=report['ignored'], invalid=report['invalid']), None
     if total > MAX_IMPORT_LINKS:
-        return jsonify({'error': f'Trop de liens ({total}) : maximum {MAX_IMPORT_LINKS} par import. '
-                                 'Découpez la liste en plusieurs parties.'}), 400
+        return _import_error(f'Trop de liens ({total}) : maximum {MAX_IMPORT_LINKS} par import. '
+                             'Découpez la liste en plusieurs parties.'), None
 
-    # Liste ordonnée de (dossier, éléments)
-    if forced:
-        merged = [item for items in groups.values() for item in items]
-        plan = [(links_import.folder_name(forced), merged)]
-    else:
-        plan = [(links_import.folder_name(items[0]['username']), items)
-                for items in groups.values()]
-
+    pseudos = _pseudo_counts(groups)
+    suggested = max(pseudos, key=lambda n: pseudos[n]) if pseudos else None  # 1er en cas d'égalité
+    if mode == 'single' and dest is None and len(pseudos) == 1:
+        dest = suggested
     min_sleep, max_sleep = _normalize_sleep(data.get('min_sleep'), data.get('max_sleep'))
-    force_update = bool(data.get('force_update', False))
+    return None, {'groups': groups, 'report': report, 'total': total, 'mode': mode,
+                  'destination': dest if mode == 'single' else None, 'pseudos': pseudos,
+                  'suggested': suggested, 'force_update': bool(data.get('force_update', False)),
+                  'min_sleep': min_sleep, 'max_sleep': max_sleep}
+
+
+def _make_plan(ctx):
+    return links_import.build_plan(
+        ctx['groups'], mode=ctx['mode'], destination=ctx['destination'],
+        existing_folders=links_import.list_folders('downloads'))
+
+
+def _folder_totals(result):
+    c = result.counts
+    return {'to_download': len(result.to_process), 'downloaded': c['downloaded'],
+            'adopt': c['adopt'], 'ignored': c['ignored'], 'unavailable': c['unavailable'],
+            'retry_due': c['retry_due'], 'retry_waiting': c['retry_waiting'], 'new': c['new'],
+            'duplicates': c['duplicate'], 'invalid': c['invalid'], 'valid': result.total}
+
+
+def _triage_plan(plan, force_update):
+    """Tri LOCAL et en lecture seule de chaque dossier du plan (aucun dossier créé, aucun
+    réseau). Retourne une liste de dicts {name, exists, result, totals, state_recovered}."""
+    folders = []
+    for name, items in plan:
+        user_dir = main.get_user_dir(name)
+        success, failed = main.load_history_split(name)
+        disk = disk_index.scan_profile_dir(user_dir)
+        lstate = link_state.LinkState.load(user_dir)
+        ctx = triage.TriageContext(history_success=set(success),
+                                   history_failed=set(failed) - set(success),
+                                   disk=disk, state=lstate.items())
+        result = triage.classify_links(items, ctx, force_update=force_update)
+        folders.append({'name': name, 'exists': os.path.isdir(user_dir), 'result': result,
+                        'totals': _folder_totals(result),
+                        'state_recovered': lstate.recovered_from_corruption})
+    return folders
+
+
+def _plan_hash(folders, force_update):
+    if len(folders) == 1:
+        return folders[0]['result'].plan_hash(folders[0]['name'], force_update)
+    payload = json.dumps([[f['name'], f['result'].plan_hash(f['name'], force_update)]
+                          for f in folders])
+    return hashlib.sha1(payload.encode('utf-8')).hexdigest()
+
+
+def _busy_folders(names):
+    """Dossiers du plan dont une tâche est réellement en cours."""
+    return [n for n in names if active_threads.get(n) is not None and active_threads[n].is_alive()]
+
+
+def _aggregate_totals(ctx, folders):
+    report = ctx['report']
+    totals = {key: sum(f['totals'][key] for f in folders) for key in folders[0]['totals']}
+    totals['duplicates'] += report['duplicates']
+    totals['valid'] = report['total']
+    totals['ignored_short_links'] = report['ignored']
+    totals['invalid_count'] = report['invalid_count']
+    return totals
+
+
+def _build_preview(ctx, folders):
+    report = ctx['report']
+    totals = _aggregate_totals(ctx, folders)
+    samples = {cat: [] for cat in triage.CATEGORIES}
+    for f in folders:
+        for cat, pairs in f['result'].sample(MAX_SAMPLES).items():
+            room = MAX_SAMPLES - len(samples[cat])
+            samples[cat].extend(list(p) for p in pairs[:room])
+    names = [f['name'] for f in folders]
+    busy = _busy_folders(names)
+    warnings = [f"Une tâche est déjà en cours pour @{name} : l'import sera refusé tant qu'elle "
+                "n'est pas terminée." for name in busy]
+    if report['ignored']:
+        warnings.append(f"{report['ignored']} lien(s) court(s) vm.tiktok.com ignoré(s) : ouvrez-les "
+                        "dans le navigateur et utilisez le lien complet.")
+    for f in folders:
+        if f['state_recovered']:
+            warnings.append(f"Le fichier d'états de @{f['name']} était illisible : il a été mis de "
+                            "côté et les états repartent de zéro.")
+    single = ctx['mode'] == 'single'
+    out = {'status': 'ok', 'plan_hash': _plan_hash(folders, ctx['force_update']),
+           'mode': ctx['mode'], 'destination': names[0] if single else None,
+           'exists': folders[0]['exists'] if single else None,
+           'pseudos': ctx['pseudos'], 'totals': totals, 'invalid': report['invalid'],
+           'estimate_s': triage.estimate_seconds(totals['to_download'], ctx['min_sleep'],
+                                                 ctx['max_sleep']),
+           'samples': samples, 'busy': busy, 'warnings': warnings,
+           'limits': {'max_links': MAX_IMPORT_LINKS}}
+    if not single:
+        out['folders'] = [{'name': f['name'], 'exists': f['exists'], 'totals': f['totals'],
+                           'busy': f['name'] in busy} for f in folders]
+    return out
+
+
+@app.route('/api/import/preview', methods=['POST'])
+def preview_import():
+    """Aperçu d'un import : tri local en lecture seule, rien n'est lancé ni créé."""
+    error, ctx = _prepare_import(request.get_json(silent=True), default_mode='single')
+    if error:
+        return error
+    if ctx['mode'] == 'single' and ctx['destination'] is None:
+        return jsonify({'status': 'needs_destination', 'pseudos': ctx['pseudos'],
+                        'suggested': ctx['suggested']})
+    folders = _triage_plan(_make_plan(ctx), ctx['force_update'])
+    return jsonify(_build_preview(ctx, folders))
+
+
+@app.route('/api/import', methods=['POST'])
+def start_import():
+    """Importe une liste de liens (texte libre) et les télécharge via orchestrator.run_import."""
+    data = request.get_json(silent=True)
+    error, ctx = _prepare_import(data, default_mode='by_author')
+    if error:
+        return error
+    if ctx['mode'] == 'single' and ctx['destination'] is None:
+        return jsonify({'error': 'destination_required',
+                        'message': 'Plusieurs comptes dans la liste : choisissez le dossier de '
+                                   'destination.',
+                        'pseudos': ctx['pseudos'], 'suggested': ctx['suggested']}), 400
+    report = ctx['report']
+    plan = _make_plan(ctx)
 
     names = [name for name, _ in plan]
     for name in names:
@@ -791,9 +968,16 @@ def start_import():
             del active_threads[name]
             active_tasks.pop(name, None)
 
+    folders = _triage_plan(plan, ctx['force_update'])
+    plan_hash = _plan_hash(folders, ctx['force_update'])
+    expected = data.get('plan_hash')
+    if expected is not None and expected != plan_hash:
+        return jsonify({'error': 'plan_changed',
+                        'message': "Les données ont changé depuis l'analyse : relancez l'analyse."}), 409
+
     thread = threading.Thread(
-        target=background_import_task, args=(plan, min_sleep, max_sleep, force_update),
-        daemon=True)
+        target=background_import_task,
+        args=(plan, ctx['min_sleep'], ctx['max_sleep'], ctx['force_update']), daemon=True)
     for name, items in plan:
         active_threads[name] = thread
         active_tasks[name] = "queued"
@@ -801,16 +985,18 @@ def start_import():
                        counts={"listed": len(items)}, last_message="En attente de son tour")
     thread.start()
 
-    counts = {name: len(items) for name, items in plan}
     return jsonify({
         'status': 'started',
         'task_id': names[0],
-        'message': f'Import de {total} lien(s) démarré pour ' + ', '.join('@' + n for n in names),
-        'counts': counts,
+        'message': f"Import de {ctx['total']} lien(s) démarré pour " + ', '.join('@' + n for n in names),
+        'counts': {name: len(items) for name, items in plan},
         'ignored': report['ignored'],
         'invalid': report['invalid'],
         'duplicates': report['duplicates'],
+        'totals': _aggregate_totals(ctx, folders),
+        'plan_hash': plan_hash,
     })
+
 
 @app.route('/api/task/<task_id>')
 def get_task_status(task_id):
@@ -870,17 +1056,25 @@ def delete_profile(username):
 
     return jsonify({'error': 'Profile not found'}), 404
 
+IGNORED_REASON = 'supprimée par l\'utilisateur'
+
+
+def _safe_username(username):
+    """Pseudo de route sûr pour un nom de dossier (pas de séparateur, pas de '..')."""
+    return links_import.is_valid_username(username)
+
+
 @app.route('/api/video/<username>/<filename>/delete', methods=['DELETE'])
 def delete_video(username, filename):
-    """Delete a single video and remove its ID from history"""
-    import re
-
+    """Supprime une vidéo, la retire de l'historique et la marque « ignorée » (jamais
+    retéléchargée, sauf restauration)."""
     # Decode URL-encoded characters
     filename = unquote(filename)
     username = unquote(username)
 
     # Security: prevent path traversal
-    if '..' in username or '..' in filename or '/' in filename or '\\' in filename:
+    if ('..' in username or '..' in filename or '/' in filename or '\\' in filename
+            or '/' in username or '\\' in username):
         return jsonify({'error': 'Invalid path'}), 400
 
     user_dir = get_user_dir(username)
@@ -890,32 +1084,88 @@ def delete_video(username, filename):
         return jsonify({'error': 'Video not found'}), 404
 
     try:
-        # Extract video ID from filename
-        # Format: YYYYMMDD_username_ID.ext
-        id_match = re.search(r'_(\d{19})\.mp4$', filename)
-        video_id = id_match.group(1) if id_match else None
+        parsed = disk_index.parse_filename(filename)
+        video_id = parsed[0] if parsed else None
 
         # Delete the video file
         os.remove(file_path)
 
-        # Remove ID from metadata if found
+        in_history = False
+        ignored = False
         if video_id:
-            manager = get_metadata_manager(username)
-            manager.load()
-            if video_id in manager._metadata:
-                del manager._metadata[video_id]
-                manager._id_set.discard(video_id)
-                manager._save()
+            with orchestrator._metadata_lock:
+                # Remove ID from metadata if found (écriture atomique du gestionnaire)
+                manager = get_metadata_manager(username)
+                manager.load()
+                if video_id in manager._metadata:
+                    del manager._metadata[video_id]
+                    manager._id_set.discard(video_id)
+                    manager._save()
+                    in_history = True
+                # Marque « ignorée », même si l'id n'était pas dans l'historique
+                lstate = link_state.LinkState.load(user_dir)
+                lstate.ignore(video_id, IGNORED_REASON)
+                lstate.save()
+                ignored = True
 
-        return jsonify({
+        response = {
             'success': True,
             'message': f'Video {filename} deleted',
-            'video_id': video_id
-        })
+            'video_id': video_id,
+            'removed_from_history': in_history,
+            'ignored': ignored,
+        }
+        if not video_id:
+            response['warning'] = ("Identifiant introuvable dans le nom du fichier : la vidéo a été "
+                                   "supprimée mais pourra être retéléchargée à la prochaine mise à jour.")
+        return jsonify(response)
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+def _ignored_items(username, lstate):
+    return [{'id': vid, 'url': f'https://www.tiktok.com/@{username}/video/{vid}',
+             'reason': entry.get('reason') or '', 'date': entry.get('last_attempt')}
+            for vid, entry in lstate.items().items() if entry.get('status') == 'ignored']
+
+
+@app.route('/api/profile/<username>/ignored')
+def list_ignored(username):
+    """Vidéos ignorées (supprimées par l'utilisateur) d'un profil. Lecture seule."""
+    if not _safe_username(username):
+        return jsonify({'error': 'Pseudo invalide'}), 400
+    user_dir = get_user_dir(username)
+    if not os.path.isdir(user_dir):
+        return jsonify({'error': 'Profile not found'}), 404
+    items = _ignored_items(username, link_state.LinkState.load(user_dir))
+    items.sort(key=lambda i: (i['date'] or '', i['id']), reverse=True)
+    return jsonify({'count': len(items), 'items': items})
+
+
+@app.route('/api/profile/<username>/restore', methods=['POST'])
+def restore_ignored(username):
+    """Lève l'ignorance de vidéos ({ids: [...]} ou {all: true}). Les autres états sont intacts."""
+    if not _safe_username(username):
+        return jsonify({'error': 'Pseudo invalide'}), 400
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Corps JSON attendu'}), 400
+    ids = data.get('ids')
+    restore_all = data.get('all') is True
+    if not restore_all and not (isinstance(ids, list) and ids
+                                and all(isinstance(i, (str, int)) and not isinstance(i, bool)
+                                        for i in ids)):
+        return jsonify({'error': 'Indiquez les identifiants à restaurer ou all: true.'}), 400
+    user_dir = get_user_dir(username)
+    if not os.path.isdir(user_dir):
+        return jsonify({'error': 'Profile not found'}), 404
+    with orchestrator._metadata_lock:
+        lstate = link_state.LinkState.load(user_dir)
+        wanted = lstate.list_by_status('ignored') if restore_all else [str(i) for i in ids]
+        restored = [vid for vid in dict.fromkeys(wanted) if lstate.restore(vid)]
+        lstate.save()
+    return jsonify({'restored': len(restored), 'ids': restored})
 
 
 @app.route('/api/stats')
@@ -1044,6 +1294,13 @@ def emit_download_summary(username, stats):
     emit_log(f"  Échecs:                         {failed_count}", "info", "SUMMARY")
     if unknown_count:
         emit_log(f"  Type inconnu (réessai prévu):   {unknown_count}", "error", "SUMMARY")
+    for label, key in (("Adoptées depuis le disque:", "adopted"), ("Ignorées (supprimées):", "ignored"),
+                       ("Indisponibles:", "unavailable"), ("En attente d'un essai:", "retry_waiting")):
+        value = stats.get(key, 0) or 0
+        if key == "unavailable":
+            value += stats.get("marked_unavailable", 0) or 0
+        if value:
+            emit_log(f"  {label:<32}{value}", "info", "SUMMARY")
     emit_log(f"  Durée totale:                   {minutes}m {seconds:02d}s", "info", "SUMMARY")
     emit_log(f"  Taille totale:                  {total_size_mb:.1f} MB", "info", "SUMMARY")
     if total_downloaded > 0 and total_time > 0:
@@ -1092,7 +1349,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
             return
 
         try:
-            history_count = len(load_history(username))
+            history_count = len(main.load_history_split(username)[0])  # succès seulement
         except Exception:
             history_count = 0
 

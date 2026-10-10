@@ -227,7 +227,7 @@ Renvoie `{"tasks": [...], "server_time": <epoch>}`. Les tâches en cours viennen
 | `elapsed_s` | Durée écoulée, calculée à la lecture |
 | `current` | `{id, url, step, index}` avec `step` = `detection` ou `telechargement`, sinon `null` |
 | `pause_s` | Durée de la pause anti-ban en cours, sinon `null` |
-| `counts` | `listed`, `done`, `videos`, `slideshows`, `failed`, `unknown`, `skipped` |
+| `counts` | `listed`, `done`, `videos`, `slideshows`, `failed`, `unknown`, `skipped`, `known`, `adopted`, `ignored`, `unavailable`, `retry_waiting`, `retried` |
 | `total` | Total à traiter, `null` tant que le listing n'est pas fini |
 | `size_mb` | Taille téléchargée |
 | `problems` | 5 derniers avertissements/erreurs `{time, level, message}`, sans doublon consécutif |
@@ -235,6 +235,21 @@ Renvoie `{"tasks": [...], "server_time": <epoch>}`. Les tâches en cours viennen
 | `summary` | Résumé final (`null` en cours) |
 
 Aucun chemin de fichier (cookies) n'est exposé. `POST /api/tasks/clear` efface les états terminés et conserve ceux des tâches en cours. `/stream_logs` (SSE) et `/api/task/<id>` restent disponibles.
+
+### Import d'une liste de liens
+
+`POST /api/import/preview` (analyse locale, lecture seule : aucun dossier créé, aucune tâche lancée, aucun réseau). Corps JSON : `text`, `mode` (`single` par défaut | `by_author`), `destination` (optionnel), `force_update`, `min_sleep`, `max_sleep`. Erreurs 400 : corps invalide, texte vide, aucun lien valide, plus de 5000 liens.
+
+- Mode `single` avec plusieurs pseudos et sans `destination` : `{"status": "needs_destination", "pseudos": {...}, "suggested": "pseudo"}`.
+- Sinon : `{"status": "ok", "plan_hash", "mode", "destination", "exists", "pseudos", "totals", "invalid", "estimate_s", "samples", "busy", "warnings", "limits"}`. `totals` : `valid`, `to_download`, `downloaded`, `adopt`, `ignored`, `unavailable`, `retry_due`, `retry_waiting`, `new`, `duplicates`, `ignored_short_links`, `invalid_count`. `samples` : 20 couples `[id, url]` au plus par catégorie. En mode `by_author`, la réponse ajoute `folders: [{name, exists, totals, busy}]`.
+
+`POST /api/import` accepte les mêmes paramètres (mode par défaut `by_author`) et `plan_hash`. Réponse : `status`, `task_id`, `message`, `counts`, `ignored`, `invalid`, `duplicates`, `totals`, `plan_hash`. Si `plan_hash` est fourni et que le plan recalculé diffère : 409 `{"error": "plan_changed"}` et rien n'est lancé. 400 `{"error": "destination_required", "pseudos", "suggested"}` en mode `single` avec plusieurs pseudos sans destination. 409 aussi si une tâche est déjà en cours pour un dossier.
+
+### Vidéos ignorées
+
+- `GET /api/profile/<username>/ignored` : `{count, items: [{id, url, reason, date}]}` (lecture seule, 404 si le dossier n'existe pas).
+- `POST /api/profile/<username>/restore` avec `{"ids": [...]}` ou `{"all": true}` : `{restored, ids}`. Seuls les états « ignorée » sont levés ; les vidéos restaurées seront retéléchargées à la prochaine mise à jour.
+- `DELETE /api/video/<username>/<filename>/delete` retire aussi l'id de l'historique et le marque « ignoré » (champs ajoutés à la réponse : `removed_from_history`, `ignored`, et `warning` si aucun id n'est extractible du nom du fichier).
 
 ### Statistiques
 

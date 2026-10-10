@@ -177,3 +177,49 @@ def test_folder_name_matches_existing_directory_case_insensitively(tmp_path):
     assert links_import.folder_name("carol", str(tmp_path)) == "carol"
     assert links_import.folder_name("bob.txt", str(tmp_path)) == "bob.txt"  # fichier, pas dossier
     assert links_import.folder_name("x", str(tmp_path / "absent")) == "x"
+
+
+# ---------------------------------------------------------------- build_plan
+
+def _groups(*pairs):
+    return parse_links("\n".join(U(u, n) for u, n in pairs))[0]
+
+
+def test_build_plan_by_author_is_default_and_keeps_order():
+    groups = _groups(("alice", 1), ("bob", 2), ("alice", 3))
+    plan = links_import.build_plan(groups)
+    assert [(name, [i["id"] for i in items]) for name, items in plan] == [
+        ("alice", ["1", "3"]), ("bob", ["2"])]
+
+
+def test_build_plan_single_keeps_global_order():
+    groups = _groups(("alice", 1), ("bob", 2), ("alice", 3), ("carol", 4))
+    plan = links_import.build_plan(groups, mode="single", destination="zed")
+    assert len(plan) == 1 and plan[0][0] == "zed"
+    assert [i["id"] for i in plan[0][1]] == ["1", "2", "3", "4"]
+
+
+def test_build_plan_resolves_case_from_existing_folders():
+    groups = _groups(("bob", 1))
+    assert links_import.build_plan(groups, existing_folders=["Bob", "x"])[0][0] == "Bob"
+    assert links_import.build_plan(groups, mode="single", destination="BOB",
+                                   existing_folders=["Bob"])[0][0] == "Bob"
+    assert links_import.build_plan(groups, mode="single", destination="BOB")[0][0] == "BOB"
+
+
+@pytest.mark.parametrize("bad", [None, "", "..", "a/b", "a\b", "a b", "x" * 80, 5])
+def test_build_plan_single_validates_destination(bad):
+    with pytest.raises(ValueError):
+        links_import.build_plan(_groups(("a", 1)), mode="single", destination=bad)
+
+
+def test_build_plan_validates_pseudo_and_mode():
+    with pytest.raises(ValueError):
+        links_import.build_plan({"x": [{"id": "1", "url": "u", "username": "../x"}]})
+    with pytest.raises(ValueError):
+        links_import.build_plan(_groups(("a", 1)), mode="autre")
+
+
+def test_build_plan_is_pure_and_handles_empty():
+    assert links_import.build_plan({}) == []
+    assert links_import.build_plan({}, mode="single", destination="a") == []

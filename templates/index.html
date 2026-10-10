@@ -40,6 +40,29 @@
     .code-box { background: var(--void); border: 2px solid var(--line2); padding: 12px 14px; max-height: 170px; overflow: auto; font-size: 12px; line-height: 1.5; color: var(--dim); white-space: pre; margin: 0; }
     .import-text { font-size: 13px; resize: vertical; min-height: 120px; white-space: pre; overflow: auto; }
 
+    /* Import : choix du dossier et carte de résultat de l'analyse */
+    .choice { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 2px solid var(--line); cursor: pointer; min-width: 0; }
+    .choice:hover { border-color: var(--dim); }
+    .choice:has(input:checked) { border-color: var(--violet); background: var(--panel2); }
+    .choice:has(input:focus-visible) { outline: 3px solid var(--violet); outline-offset: 2px; }
+    .choice input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--violet-fill); flex: none; }
+    .import-result { background: var(--void); border: 1px solid var(--line); border-left: 4px solid var(--violet); padding: 16px 18px; min-width: 0; }
+    .import-result[data-state="empty"] { border-left-color: var(--lime); }
+    .import-result[data-state="stale"], .import-result[data-state="ask"] { border-left-color: var(--amber); }
+    .res-title { font-size: 18px; font-weight: 800; color: var(--ink); overflow-wrap: anywhere; }
+    .res-meta { color: var(--dim); font-size: 14px; margin-top: 4px; overflow-wrap: anywhere; }
+    .res-meta b { color: var(--ink); }
+    .res-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 6px; }
+    .res-list li { display: flex; gap: 10px; align-items: baseline; color: var(--dim); font-size: 14px; border-bottom: 1px solid #1d1d2a; padding-bottom: 6px; min-width: 0; }
+    .res-list li:last-child { border-bottom: 0; padding-bottom: 0; }
+    .res-num { font-weight: 800; color: var(--ink); min-width: 3.2ch; text-align: right; flex: none; }
+    .res-list .is-new .res-num { color: var(--lime); }
+    .res-list .is-retry .res-num { color: var(--amber); }
+    .res-list .is-bad .res-num { color: var(--rose); }
+    .res-warn { margin-top: 12px; border-left: 3px solid var(--amber); padding-left: 10px; color: var(--amber); font-size: 13.5px; overflow-wrap: anywhere; }
+    .res-folders { margin-top: 12px; font-size: 13px; color: var(--dim); display: grid; gap: 4px; }
+    .suggest { margin-top: 12px; }
+
     .stat-val { font-size: 28px; font-weight: 800; line-height: 1.1; }
 
     .log-line { padding: 3px 0; border-bottom: 1px solid #1d1d2a; word-break: break-word; }
@@ -128,7 +151,7 @@
                             <input id="forceUpdate" name="forceUpdate" type="checkbox" class="mt-1 h-5 w-5 accent-violet-fill">
                             <span>
                                 <span class="field-label !mb-0">Tout rescanner</span>
-                                <span class="field-help block !mt-0">Normalement inutile : un profil est entièrement scanné automatiquement la première fois. Cochez pour retenter aussi les vidéos en échec.</span>
+                                <span class="field-help block !mt-0">Normalement inutile : un profil est entièrement scanné automatiquement la première fois. Cochez pour retenter aussi les vidéos en échec. Pour un import : retenter aussi les indisponibles et les essais en attente.</span>
                             </span>
                         </label>
                         <button type="button" id="listBtn" class="btn btn-sm mt-4">Lister les liens sans télécharger</button>
@@ -147,7 +170,7 @@
             <ol class="list-decimal pl-6 mt-4 space-y-1 max-w-3xl text-dim">
                 <li>Ouvrez le profil sur tiktok.com dans votre navigateur, connecté à votre compte.</li>
                 <li>Ouvrez la console (touche F12, onglet Console), collez la commande ci-dessous, puis validez avec Entrée. Si le navigateur le demande, tapez d'abord <code class="text-ink">allow pasting</code>. Attendez la fin du défilement : un fichier <code class="text-ink">tiktok_liens_pseudo.txt</code> est téléchargé.</li>
-                <li>Revenez ici et collez le contenu du fichier (ou choisissez le fichier), puis cliquez sur « Importer et télécharger ».</li>
+                <li>Revenez ici et collez le contenu du fichier (ou choisissez le fichier), choisissez le dossier de destination, cliquez sur « Analyser », puis sur le bouton d'import.</li>
             </ol>
 
             <div class="mt-5 max-w-3xl">
@@ -168,8 +191,37 @@
                         <input type="file" id="importFile" accept=".txt,text/plain" class="text-sm text-dim max-w-full">
                     </div>
                 </div>
-                <p class="field-help">Un lien par ligne. Les pauses et l'option « Tout rescanner » de la section Options s'appliquent. Les vidéos déjà téléchargées sont ignorées.</p>
-                <button type="button" id="importBtn" class="btn btn-primary mt-4" disabled>Importer et télécharger</button>
+                <p class="field-help">Un lien par ligne. Les pauses et l'option « Tout rescanner » de la section Options s'appliquent. Les vidéos déjà téléchargées ou supprimées par vous sont ignorées.</p>
+
+                <fieldset class="mt-5 min-w-0">
+                    <legend class="field-label">Où ranger les vidéos</legend>
+                    <div class="grid gap-3 sm:grid-cols-2">
+                        <label class="choice">
+                            <input type="radio" name="importMode" value="single" checked>
+                            <span><span class="font-bold text-ink block">Tout dans un seul dossier</span><span class="field-help block !mt-0">Même si les liens viennent de plusieurs comptes.</span></span>
+                        </label>
+                        <label class="choice">
+                            <input type="radio" name="importMode" value="by_author">
+                            <span><span class="font-bold text-ink block">Un dossier par compte</span><span class="field-help block !mt-0">Chaque compte de la liste a son propre dossier.</span></span>
+                        </label>
+                    </div>
+                </fieldset>
+
+                <div id="destBox" class="mt-4 max-w-md">
+                    <label for="importDest" class="field-label">Dossier de destination (pseudo)</label>
+                    <div class="flex items-center gap-2">
+                        <span class="text-violet font-extrabold" aria-hidden="true">@</span>
+                        <input type="text" id="importDest" class="input" placeholder="pseudo" autocapitalize="off" spellcheck="false" autocomplete="off" aria-describedby="importDestHelp">
+                    </div>
+                    <p id="importDestHelp" class="field-help">Obligatoire si la liste contient plusieurs comptes. Vide : le compte de la liste est utilisé.</p>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3 mt-5">
+                    <button type="button" id="analyzeBtn" class="btn" disabled>Analyser</button>
+                    <button type="button" id="importBtn" class="btn btn-primary" disabled>Importer</button>
+                </div>
+
+                <div id="importResult" class="mt-5" role="status" aria-live="polite"></div>
             </div>
         </details>
     </section>
@@ -397,6 +449,12 @@
             let txt = parts.length ? parts.join(', ') + ' en ' + dur : 'Aucune nouvelle vidéo (' + dur + ')';
             if (failed) txt += ', ' + plural(failed, 'échec', 'échecs');
             if (unknown) txt += ', ' + plural(unknown, 'type inconnu', 'types inconnus');
+            const adopted = s.adopted !== undefined ? s.adopted : (c.adopted || 0);
+            const unavailable = s.unavailable !== undefined ? s.unavailable : (c.unavailable || 0);
+            const waiting = s.retry_waiting !== undefined ? s.retry_waiting : (c.retry_waiting || 0);
+            if (adopted) txt += ', ' + plural(adopted, 'adoptée', 'adoptées');
+            if (unavailable) txt += ', ' + plural(unavailable, 'indisponible', 'indisponibles');
+            if (waiting) txt += ', ' + waiting + ' à retenter plus tard';
             if (s.stopped) txt = 'Arrêtée. ' + txt;
             return txt;
         }
@@ -467,7 +525,14 @@
                 stats.append(statEl(c.slideshows || 0, (c.slideshows || 0) > 1 ? 'slideshows' : 'slideshow'));
                 stats.append(statEl(c.failed || 0, (c.failed || 0) > 1 ? 'échecs' : 'échec', c.failed ? 'bad' : ''));
                 if (c.unknown) stats.append(statEl(c.unknown, 'type inconnu', 'warn'));
-                if (c.skipped) stats.append(statEl(c.skipped, (c.skipped > 1 ? 'ignorées' : 'ignorée')));
+                // Les compteurs du tri n'apparaissent que s'ils sont non nuls
+                const detailed = c.known || c.adopted || c.ignored || c.unavailable || c.retry_waiting;
+                if (c.skipped && !detailed) stats.append(statEl(c.skipped, (c.skipped > 1 ? 'ignorées' : 'ignorée')));
+                if (c.known) stats.append(statEl(c.known, c.known > 1 ? 'déjà téléchargées' : 'déjà téléchargée'));
+                if (c.adopted) stats.append(statEl(c.adopted, c.adopted > 1 ? 'adoptées' : 'adoptée'));
+                if (c.ignored) stats.append(statEl(c.ignored, c.ignored > 1 ? 'ignorées' : 'ignorée'));
+                if (c.retry_waiting) stats.append(statEl(c.retry_waiting, 'à retenter plus tard'));
+                if (c.unavailable) stats.append(statEl(c.unavailable, c.unavailable > 1 ? 'indisponibles' : 'indisponible', 'warn'));
                 stats.append(statEl(fmtSize(t.size_mb), ''));
             }
             const dur = statEl('', '');
@@ -730,10 +795,204 @@
             label.textContent = n + (n > 1 ? ' liens valides détectés' : ' lien valide détecté')
                 + (n > MAX_IMPORT ? ' (maximum ' + MAX_IMPORT + ' par import)' : '');
             label.style.color = n > MAX_IMPORT ? 'var(--rose)' : '';
-            document.getElementById('importBtn').disabled = n === 0 || n > MAX_IMPORT;
+            document.getElementById('analyzeBtn').disabled = n === 0 || n > MAX_IMPORT || analyzing;
             return n;
         }
+
+        // --- Import en deux temps : Analyser (aperçu local, sans rien lancer), puis Importer ---
+        let analyzing = false;
+        let lastPreview = null;     // dernier aperçu valide ; null = à relancer
+        const importMode = () => document.querySelector('input[name="importMode"]:checked').value;
+        const importDestValue = () => document.getElementById('importDest').value.trim().replace(/^@/, '');
+        const frPlural = (n, one, many) => n + ' ' + (n > 1 ? many : one);
+        const importSignature = () => JSON.stringify([
+            document.getElementById('importText').value, importMode(), importDestValue(),
+            document.getElementById('forceUpdate').checked]);
+
+        function fmtEstimate(s) {
+            if (!s || s < 60) return "moins d'une minute";
+            const m = Math.round(s / 60);
+            if (m < 60) return 'environ ' + m + ' min';
+            return 'environ ' + Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0');
+        }
+
+        function setResult(state, nodes) {
+            const box = document.getElementById('importResult');
+            box.replaceChildren();
+            if (!nodes || !nodes.length) return;
+            const card = h('div', 'import-result');
+            card.dataset.state = state;
+            nodes.forEach((n) => card.append(n));
+            box.append(card);
+        }
+
+        function setAction(label, enabled) {
+            const btn = document.getElementById('importBtn');
+            btn.textContent = label;
+            btn.disabled = !enabled;
+        }
+
+        function staleCard(message) {
+            setResult('stale', [h('p', 'res-title', 'Les données ont changé'), h('p', 'res-meta', message)]);
+        }
+
+        function invalidatePreview() {
+            const had = lastPreview !== null;
+            lastPreview = null;
+            setAction('Importer', false);
+            if (had) staleCard("Relancez l'analyse pour mettre le résultat à jour.");
+        }
+
+        function updateDestVisibility() {
+            document.getElementById('destBox').hidden = importMode() !== 'single';
+        }
+
+        function resLine(n, text, cls) {
+            const li = h('li', cls || '');
+            li.append(h('span', 'res-num', String(n)), h('span', 'min-w-0', text));
+            return li;
+        }
+
+        function renderPseudos(pseudos) {
+            const entries = Object.entries(pseudos || {}).sort((a, b) => b[1] - a[1]);
+            if (entries.length < 2) return null;
+            const shown = entries.slice(0, 6).map(([name, n]) => '@' + name + ' (' + n + ')').join(', ');
+            return h('p', 'res-meta', 'Liens de ' + entries.length + ' comptes : ' + shown + (entries.length > 6 ? ', …' : ''));
+        }
+
+        function renderPreview(p) {
+            const t = p.totals;
+            const nodes = [];
+            const single = p.mode === 'single';
+            const total = t.to_download;
+            nodes.push(h('p', 'res-title', total > 0 ? frPlural(total, 'vidéo à télécharger', 'vidéos à télécharger')
+                : (t.adopt > 0 ? 'Rien à télécharger, mais des fichiers à ajouter à l’historique' : 'Rien à télécharger')));
+            if (single) {
+                const meta = h('p', 'res-meta');
+                meta.append('Dossier : ', h('b', '', '@' + p.destination), p.exists ? ' (existant)' : ' (nouveau dossier)');
+                nodes.push(meta);
+            } else {
+                nodes.push(h('p', 'res-meta', frPlural((p.folders || []).length, 'dossier', 'dossiers') + ', un par compte'));
+            }
+            const pseudoLine = renderPseudos(p.pseudos);
+            if (pseudoLine) nodes.push(pseudoLine);
+            if (total > 0) nodes.push(h('p', 'res-meta', 'Durée estimée : ' + fmtEstimate(p.estimate_s)));
+
+            const ul = h('ul', 'res-list');
+            const rows = [
+                [t.downloaded, t.downloaded > 1 ? 'déjà téléchargées' : 'déjà téléchargée', ''],
+                [t.adopt, (t.adopt > 1 ? 'trouvées' : 'trouvée') + ' sur le disque (ajoutées à l’historique sans retéléchargement)', ''],
+                [t.new, t.new > 1 ? 'nouvelles' : 'nouvelle', 'is-new'],
+                [t.retry_due, 'à retenter', 'is-retry'],
+                [t.retry_waiting, 'en attente d’un prochain essai', 'is-retry'],
+                [t.ignored, (t.ignored > 1 ? 'ignorées' : 'ignorée') + ' (supprimées par vous)', ''],
+                [t.unavailable, t.unavailable > 1 ? 'indisponibles' : 'indisponible', 'is-bad'],
+                [t.duplicates, t.duplicates > 1 ? 'doublons dans la liste' : 'doublon dans la liste', ''],
+                [t.invalid_count, t.invalid_count > 1 ? 'lignes illisibles' : 'ligne illisible', 'is-bad'],
+            ];
+            rows.forEach(([n, text, cls]) => { if (n > 0) ul.append(resLine(n, text, cls)); });
+            if (ul.children.length) nodes.push(ul);
+
+            if (!single && (p.folders || []).length) {
+                const list = h('div', 'res-folders');
+                p.folders.slice(0, 8).forEach((f) => {
+                    list.append(h('span', '', '@' + f.name + ' : ' + f.totals.to_download + ' à télécharger'
+                        + (f.exists ? '' : ' (nouveau dossier)') + (f.busy ? ' (tâche en cours)' : '')));
+                });
+                if (p.folders.length > 8) list.append(h('span', '', '… et ' + (p.folders.length - 8) + ' autres dossiers'));
+                nodes.push(list);
+            }
+            (p.warnings || []).forEach((w) => nodes.push(h('p', 'res-warn', w)));
+
+            if (total === 0 && t.adopt === 0) {
+                nodes.push(h('p', 'res-meta', 'Rien à télécharger : tout est déjà à jour.'));
+                setResult('empty', nodes);
+                setAction('Importer', false);
+            } else {
+                setResult('ok', nodes);
+                setAction(total > 0 ? 'Importer ' + frPlural(total, 'vidéo', 'vidéos')
+                                    : 'Mettre à jour l’historique (' + t.adopt + ')', true);
+            }
+        }
+
+        function renderNeedsDestination(p) {
+            const nodes = [h('p', 'res-title', 'Choisissez le dossier de destination'),
+                           h('p', 'res-meta', 'Cette liste contient des liens de plusieurs comptes. Toutes les vidéos seront rangées dans un seul dossier : écrivez son nom dans « Dossier de destination », ou prenez la suggestion.')];
+            const pseudoLine = renderPseudos(p.pseudos);
+            if (pseudoLine) nodes.push(pseudoLine);
+            if (p.suggested) {
+                const btn = h('button', 'btn btn-sm suggest', 'Utiliser @' + p.suggested + ' (le plus fréquent)');
+                btn.type = 'button';
+                btn.addEventListener('click', () => {
+                    document.getElementById('importDest').value = p.suggested;
+                    analyzeImport();
+                });
+                nodes.push(btn);
+            }
+            setResult('ask', nodes);
+            setAction('Importer', false);
+        }
+
+        function importBody(extra) {
+            const f = readForm();
+            const mode = importMode();
+            const body = {
+                text: document.getElementById('importText').value, mode: mode,
+                min_sleep: f.min_sleep, max_sleep: f.max_sleep, force_update: f.force_update
+            };
+            if (mode === 'single' && importDestValue()) body.destination = importDestValue();
+            return Object.assign(body, extra || {});
+        }
+
+        async function analyzeImport() {
+            if (analyzing) return;
+            const n = updateImportCount();
+            if (n === 0) { showNotification('Aucun lien valide à analyser.', 'error'); return; }
+            analyzing = true;
+            lastPreview = null;
+            setAction('Importer', false);
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = 'Analyse en cours…';
+            const sent = importSignature();
+            try {
+                const res = await post('/api/import/preview', importBody());
+                if (importSignature() !== sent) {
+                    staleCard("Relancez l'analyse.");   // modifié pendant l'analyse : rien d'obsolète n'est affiché
+                } else if (!res.ok) {
+                    setResult('stale', [h('p', 'res-title', 'Analyse impossible'), h('p', 'res-meta', res.data.error || 'Le serveur a refusé la demande.')]);
+                } else if (res.data.status === 'needs_destination') {
+                    renderNeedsDestination(res.data);
+                } else {
+                    lastPreview = res.data;
+                    const dest = document.getElementById('importDest');
+                    if (res.data.mode === 'single' && res.data.destination && !dest.value.trim()) {
+                        dest.value = res.data.destination;
+                        lastPreview.sig = importSignature();
+                    } else {
+                        lastPreview.sig = sent;
+                    }
+                    renderPreview(res.data);
+                }
+            } catch (error) {
+                showNotification('Serveur injoignable. Vérifiez que web_app.py tourne.', 'error');
+            } finally {
+                analyzing = false;
+                analyzeBtn.textContent = 'Analyser';
+                updateImportCount();
+            }
+        }
+
+        // Toute modification des paramètres invalide le résultat (l'analyse se fait uniquement au clic)
+        ['importText', 'importDest'].forEach((id) => document.getElementById(id).addEventListener('input', invalidatePreview));
+        document.getElementById('forceUpdate').addEventListener('change', invalidatePreview);
+        document.querySelectorAll('input[name="importMode"]').forEach((r) => r.addEventListener('change', () => {
+            updateDestVisibility();
+            invalidatePreview();
+        }));
         document.getElementById('importText').addEventListener('input', updateImportCount);
+        document.getElementById('analyzeBtn').addEventListener('click', analyzeImport);
+        updateDestVisibility();
 
         document.getElementById('importFile').addEventListener('change', async (e) => {
             const file = e.target.files && e.target.files[0];
@@ -743,6 +1002,7 @@
                 const box = document.getElementById('importText');
                 box.value = box.value.trim() ? box.value.replace(/\s*$/, '\n') + content : content;
                 updateImportCount();
+                invalidatePreview();
                 showNotification('Fichier chargé : ' + file.name, 'info');
             } catch (err) {
                 showNotification('Impossible de lire ce fichier.', 'error');
@@ -765,28 +1025,38 @@
         });
 
         document.getElementById('importBtn').addEventListener('click', async () => {
-            const n = updateImportCount();
-            if (n === 0) { showNotification('Aucun lien valide à importer.', 'error'); return; }
+            if (!lastPreview) { showNotification("Lancez d'abord l'analyse.", 'error'); return; }
             const btn = document.getElementById('importBtn');
             btn.disabled = true;
-            const f = readForm();
+            const extra = { plan_hash: lastPreview.plan_hash };
+            if (lastPreview.mode === 'single') extra.destination = lastPreview.destination;
             try {
-                const res = await post('/api/import', {
-                    text: document.getElementById('importText').value,
-                    min_sleep: f.min_sleep, max_sleep: f.max_sleep, force_update: f.force_update
-                });
+                const res = await post('/api/import', importBody(extra));
                 if (res.ok && res.data.status === 'started') {
                     let msg = res.data.message + '. Suivez le panneau Activité.';
                     if (res.data.ignored) msg += ' ' + res.data.ignored + ' lien(s) court(s) ignoré(s).';
                     showNotification(msg, 'success');
+                    lastPreview = null;
+                    setResult('empty', [h('p', 'res-title', 'Import lancé'), h('p', 'res-meta', 'Suivez la progression dans le panneau Activité.')]);
+                    setAction('Importer', false);
                     triggerPoll();
+                } else if (res.data && res.data.error === 'plan_changed') {
+                    const text = res.data.message || "Les données ont changé depuis l'analyse : relancez l'analyse.";
+                    showNotification(text, 'error');
+                    lastPreview = null;
+                    staleCard(text);
+                    setAction('Importer', false);
+                } else if (res.data && res.data.error === 'destination_required') {
+                    lastPreview = null;
+                    renderNeedsDestination(res.data);
+                    showNotification(res.data.message || 'Choisissez le dossier de destination.', 'error');
                 } else {
-                    showNotification(res.data.error || 'Le serveur a refusé la demande.', 'error');
+                    showNotification((res.data && res.data.error) || 'Le serveur a refusé la demande.', 'error');
+                    btn.disabled = !lastPreview;
                 }
             } catch (error) {
                 showNotification('Serveur injoignable. Vérifiez que web_app.py tourne.', 'error');
-            } finally {
-                updateImportCount();
+                btn.disabled = !lastPreview;
             }
         });
 

@@ -41,16 +41,61 @@ def is_valid_username(name):
     )
 
 
-def folder_name(original, downloads_dir="downloads"):
-    """Nom de dossier pour un pseudo : celui d'un dossier existant qui correspond sans tenir
-    compte de la casse (évite deux dossiers « Bob » / « bob »), sinon le pseudo d'origine."""
+def list_folders(downloads_dir="downloads"):
+    """Noms des dossiers existants de downloads_dir (liste vide si absent). Lecture seule."""
     try:
-        for entry in os.listdir(downloads_dir):
-            if entry.lower() == original.lower() and os.path.isdir(os.path.join(downloads_dir, entry)):
-                return entry
+        return [e for e in os.listdir(downloads_dir)
+                if os.path.isdir(os.path.join(downloads_dir, e))]
     except OSError:
-        pass
+        return []
+
+
+def resolve_folder(original, existing_folders=None):
+    """Nom d'un dossier existant égal à `original` sans tenir compte de la casse (évite deux
+    dossiers « Bob » / « bob »), sinon `original`. Fonction pure."""
+    low = original.lower()
+    for entry in existing_folders or ():
+        if entry.lower() == low:
+            return entry
     return original
+
+
+def folder_name(original, downloads_dir="downloads"):
+    """Comme resolve_folder, en listant le dossier `downloads_dir`."""
+    return resolve_folder(original, list_folders(downloads_dir))
+
+
+class _Link(dict):
+    """Lien parsé : un dict ordinaire, avec sa position globale d'apparition (`pos`)."""
+    pos = 0
+
+
+def build_plan(groups, *, mode='by_author', destination=None, existing_folders=None):
+    """Plan d'import : liste ordonnée de (dossier, éléments). Fonction pure (aucune E/S).
+
+    mode 'by_author' : un dossier par pseudo, dans l'ordre d'apparition des pseudos.
+    mode 'single'    : tous les liens, dans l'ordre d'apparition global, vers UN dossier
+                       (`destination`, obligatoire).
+    Les noms de dossier suivent la casse d'un dossier existant (`existing_folders`).
+    Lève ValueError si le mode est inconnu ou si un pseudo / la destination est invalide.
+    """
+    if mode == 'single':
+        if not is_valid_username(destination):
+            raise ValueError('destination invalide')
+        merged = [item for items in groups.values() for item in items]
+        merged.sort(key=lambda item: getattr(item, 'pos', 0))  # tri stable
+        return [(resolve_folder(destination, existing_folders), merged)] if merged else []
+    if mode != 'by_author':
+        raise ValueError(f'mode inconnu : {mode!r}')
+    plan = []
+    for items in groups.values():
+        if not items:
+            continue
+        name = items[0]['username']
+        if not is_valid_username(name):
+            raise ValueError('pseudo invalide')
+        plan.append((resolve_folder(name, existing_folders), items))
+    return plan
 
 
 def normalize_url(username, kind, video_id):
@@ -73,6 +118,7 @@ def parse_links(text):
     """
     groups = {}
     seen_ids = set()
+    position = 0
     report = {"ignored": 0, "invalid": [], "invalid_count": 0, "duplicates": 0, "total": 0}
     if not isinstance(text, str):
         return groups, report
@@ -93,11 +139,11 @@ def parse_links(text):
                 continue
             seen_ids.add(video_id)
             key = username.lower()
-            groups.setdefault(key, []).append({
-                "id": video_id,
-                "url": normalize_url(username, kind, video_id),
-                "username": username,
-            })
+            link = _Link(id=video_id, url=normalize_url(username, kind, video_id),
+                         username=username)
+            link.pos = position
+            position += 1
+            groups.setdefault(key, []).append(link)
             report["total"] += 1
         if not found and not _SHORT_RE.search(line):
             report["invalid_count"] += 1

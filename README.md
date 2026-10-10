@@ -149,16 +149,31 @@ Des pauses trop courtes peuvent faire bannir votre IP.
 
 1. Ouvrez le profil sur tiktok.com dans votre navigateur connecté.
 2. Ouvrez la console (F12, onglet Console), collez la commande affichée dans l'interface (bouton « Copier la commande », source : `static/js/export_links.js`) et validez. Si le navigateur le demande, tapez d'abord `allow pasting`. Le script défile jusqu'à ce qu'aucun nouveau lien n'apparaisse pendant 6 s (maximum 15 min), puis télécharge `tiktok_liens_<pseudo>.txt` et copie la liste dans le presse-papiers.
-3. Collez le contenu (ou choisissez le fichier) dans « Liens des vidéos », puis « Importer et télécharger ».
+3. Collez le contenu (ou choisissez le fichier) dans « Liens des vidéos », choisissez où ranger les vidéos, cliquez sur **Analyser**, puis sur le bouton d'import.
 
-Les liens sont groupés par pseudo (un dossier par pseudo), dédoublonnés et normalisés ; les liens courts `vm.tiktok.com` sont ignorés (ils ne peuvent pas être résolus sans réseau). Maximum 5000 liens par import. Les pauses et « Tout rescanner » (qui retente les échecs) du formulaire s'appliquent.
+**Analyser puis Importer.** L'analyse est locale et en lecture seule (aucun appel à TikTok, aucun dossier créé). Elle classe chaque lien :
+
+- *déjà téléchargées* : présentes dans l'historique (elles le restent même si le fichier a disparu) ;
+- *trouvées sur le disque* : le fichier existe mais pas l'historique ; elles sont ajoutées à l'historique sans retéléchargement ;
+- *nouvelles* et *à retenter* : seules celles-ci sont téléchargées (le bouton affiche « Importer N vidéos ») ;
+- *en attente d'un prochain essai* : un échec temporaire est retenté après 10 min, puis 1 h, puis 6 h ; après 3 essais ou un échec définitif (vidéo supprimée, privée), la vidéo devient *indisponible* ;
+- *ignorées* : supprimées par vous dans l'interface, jamais retéléchargées ;
+- *doublons* et *lignes illisibles*.
+
+Le bouton d'import vérifie que rien n'a changé depuis l'analyse (empreinte `plan_hash`) ; sinon il demande de relancer l'analyse. Si seuls des fichiers sont à adopter, il devient « Mettre à jour l'historique (N) ».
+
+**Dossier de destination.** Par défaut, tous les liens sont rangés dans **un seul dossier** (champ « Dossier de destination (pseudo) »), même s'ils viennent de plusieurs comptes ; si la liste contient plusieurs comptes, l'analyse demande de choisir (le compte le plus fréquent est suggéré). L'option « Un dossier par compte » garde l'ancien comportement. La casse d'un dossier existant est reprise.
+
+**Restaurer des vidéos ignorées.** Supprimer une vidéo dans l'interface la marque « ignorée ». La page du profil affiche « Vidéos ignorées (N) » avec un bouton « Restaurer » par vidéo et « Tout restaurer » : les vidéos restaurées redeviennent nouvelles et seront retéléchargées à la prochaine mise à jour ou au prochain import.
+
+Les liens sont dédoublonnés et normalisés ; les liens courts `vm.tiktok.com` sont ignorés (ils ne peuvent pas être résolus sans réseau). Maximum 5000 liens par import. Les pauses et « Tout rescanner » (qui retente aussi les indisponibles et les essais en attente) du formulaire s'appliquent.
 
 **En ligne de commande :**
 
 ```bash
 python main.py --links-file tiktok_liens_pseudo.txt --min-sleep 2 --max-sleep 6
 python main.py --links-file - < liens.txt          # lit l'entrée standard
-python main.py monpseudo --links-file liens.txt    # tous les liens rangés sous ce pseudo
+python main.py monpseudo --links-file liens.txt    # tous les liens rangés sous ce pseudo (un seul dossier)
 ```
 
 Options acceptées : `--min-sleep`, `--max-sleep`, `--cookies-file`, `--cookies-browser`, `--force-update`. Code de sortie `1` si aucun lien valide.
@@ -192,6 +207,10 @@ Une vidéo en échec est mémorisée et **ignorée aux lancements suivants**, sa
 tiktok/
 ├── main.py              # CLI + fonctions de téléchargement (yt-dlp, gallery-dl, ffmpeg)
 ├── orchestrator.py      # Boucle de téléchargement unique (web et CLI)
+├── triage.py            # Classement des liens avant import (lecture seule)
+├── link_state.py        # États par vidéo (link_state.json)
+├── disk_index.py        # Index des fichiers d'un profil
+├── links_import.py      # Analyse des liens et plan d'import
 ├── ytdlp_options.py     # Options yt-dlp / gallery-dl et gestion des cookies
 ├── web_app.py           # Interface web Flask + API
 ├── metadata_manager.py  # Historique et métadonnées par profil
@@ -207,6 +226,7 @@ tiktok/
     └── moncompte/
         ├── moncompte_videos.txt                       # Liens connus
         ├── metadata.json                              # Historique
+        ├── link_state.json                            # États : ignorée, indisponible, à retenter
         ├── 20250120_moncompte_7574516139682729238.mp4 # Vidéo
         └── 20250121_moncompte_7575823..._img=1/       # Slideshow (images)
 ```

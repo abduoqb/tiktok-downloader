@@ -1196,10 +1196,9 @@ def import_links_cli(args):
         if not links_import.is_valid_username(forced):
             print("ERROR: pseudo invalide (lettres, chiffres, point, tiret et tiret bas uniquement)")
             return 1
-        plan = [(links_import.folder_name(forced),
-                 [item for items in groups.values() for item in items])]
-    else:
-        plan = [(links_import.folder_name(items[0]["username"]), items) for items in groups.values()]
+    plan = links_import.build_plan(
+        groups, mode="single" if forced else "by_author", destination=forced or None,
+        existing_folders=links_import.list_folders("downloads"))
 
     for username, items in plan:
         print(f"Import de {len(items)} lien(s) pour @{username}")

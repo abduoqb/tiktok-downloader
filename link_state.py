@@ -42,6 +42,8 @@ class LinkState:
         self.user_dir = str(user_dir)
         self.path = os.path.join(self.user_dir, STATE_FILENAME)
         self._items = {}
+        # id -> 'set' | 'delete' : seules ces cles sont reappliquees a l'ecriture
+        self._touched = {}
         self._lock = threading.RLock()
         self.dirty = False
         self.recovered_from_corruption = False
@@ -118,14 +120,15 @@ class LinkState:
 
     def _set(self, item_id, entry):
         self._items[item_id] = entry
+        self._touched[item_id] = 'set'
         self.dirty = True
 
     def ignore(self, item_id, reason=""):
         key = str(item_id)
         with self._lock:
             self._set(key, {"status": "ignored", "attempts": 0, "last_error": "",
-                            "reason": str(reason or ""), "last_attempt": None,
-                            "next_retry": None})
+                            "reason": str(reason or ""),
+                            "last_attempt": _iso(datetime.now()), "next_retry": None})
 
     def restore(self, item_id):
         """Retire UNIQUEMENT un etat 'ignored'. Retourne True si retire."""
@@ -134,6 +137,7 @@ class LinkState:
             entry = self._items.get(key)
             if entry and entry["status"] == "ignored":
                 del self._items[key]
+                self._touched[key] = 'delete'
                 self.dirty = True
                 return True
             return False
@@ -179,17 +183,49 @@ class LinkState:
             entry = self._items.get(key)
             if entry and entry["status"] in ("retry", "unavailable"):
                 del self._items[key]
+                self._touched[key] = 'delete'
                 self.dirty = True
                 return True
             return False
 
+    def _read_disk_items(self):
+        """Etat actuellement sur disque (tolerant : absent/illisible => {})."""
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return {}
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, dict):
+            return {}
+        return {str(k): v for k, v in items.items()
+                if isinstance(v, dict) and v.get("status") in STATUSES}
+
     def save(self):
-        """Ecriture atomique ; sans effet si rien n'a change."""
+        """Ecriture atomique ; sans effet si rien n'a change.
+
+        Fusion a l'ecriture : le fichier est relu et seules les cles modifiees par CETTE
+        instance sont reappliquees. Un etat 'ignored' ecrit entre-temps par une autre
+        instance (suppression depuis la page profil pendant un import) n'est donc jamais
+        perdu, et jamais ecrase par un echec/une indisponibilite de cette instance.
+        """
         with self._lock:
             if not self.dirty:
                 return False
             os.makedirs(self.user_dir, exist_ok=True)
-            payload = {"version": 1, "items": self._items}
+            merged = self._read_disk_items()
+            for key, op in self._touched.items():
+                on_disk = merged.get(key)
+                if op == "delete":
+                    merged.pop(key, None)
+                    continue
+                mine = self._items.get(key)
+                if mine is None:
+                    continue
+                if on_disk and on_disk.get("status") == "ignored" and mine["status"] != "ignored":
+                    continue  # une ignorance posee ailleurs prime sur un retry/unavailable
+                merged[key] = mine
+            payload = {"version": 1, "items": merged}
             fd, tmp_path = tempfile.mkstemp(dir=self.user_dir, prefix=".link_state_",
                                             suffix=".tmp")
             try:
@@ -204,5 +240,8 @@ class LinkState:
                 except OSError:
                     pass
                 raise
+            # La vue en memoire rejoint l'etat fusionne (ignorances posees ailleurs incluses)
+            self._items = {k: dict(v) for k, v in merged.items()}
+            self._touched = {}
             self.dirty = False
             return True

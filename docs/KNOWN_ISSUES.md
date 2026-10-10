@@ -12,6 +12,12 @@ Aucun bug critique connu.
 
 ## 🟡 Mineur
 
+### Cookies expirés et vidéos « indisponibles »
+Il n'y a pas de disjoncteur : si les cookies sont expirés, des vidéos valides peuvent échouer trois fois de suite et passer « indisponibles » (retentées après 10 min, 1 h puis 6 h). Une fois les cookies renouvelés, cochez « Tout rescanner » pour les retenter.
+
+### Doublons de fichiers sur le disque
+D'anciens téléchargements peuvent avoir laissé plusieurs fichiers pour la même vidéo. `disk_index` sait les détecter, mais ils ne sont pas encore nettoyés automatiquement.
+
 ### Script d'export de liens non vérifié sur le vrai DOM TikTok
 `static/js/export_links.js` (import de liste de liens) n'a été testé que sur une page simulée : le vrai DOM n'a pas pu être consulté (captcha sans session). Il ne s'appuie que sur les ancres `href` `/video/` et `/photo/` du profil ouvert. Si l'export est incomplet, relancez-le (doublons et vidéos déjà téléchargées ignorés) ou ouvrez une issue avec le comportement observé. Les liens courts `vm.tiktok.com` ne sont pas pris en charge.
 
