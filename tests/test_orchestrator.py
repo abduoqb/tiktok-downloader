@@ -534,3 +534,61 @@ def test_parallel_mode_collects_listing_first(fake, monkeypatch):
     assert tracer.events[:4] == [("list", "1"), ("list", "2"), ("list", "3"), ("list_end", None)]
     assert all(d["total"] == 3 for e, d in events if e in ("item_start", "item_done"))
     assert stats["videos"] == 3
+
+
+# ---------------------------------------------------------------- événements pause / step
+
+def test_step_events_detection_then_download(fake):
+    fake.ids = ["1", "2"]
+    fake.types = {"2": True}
+    events = []
+    _run(progress=lambda e, d: events.append((e, d)))
+    steps = [(d["id"], d["step"]) for e, d in events if e == "step"]
+    assert steps == [("1", "detection"), ("1", "telechargement"),
+                     ("2", "detection"), ("2", "telechargement")]
+    # step arrive entre item_start et item_done du même élément
+    names = [e for e, _ in events if e in ("item_start", "step", "item_done")]
+    assert names[:4] == ["item_start", "step", "step", "item_done"]
+
+
+def test_step_unknown_type_has_no_download_step(fake):
+    fake.ids = ["1"]
+    fake.types = {"1": None}
+    events = []
+    _run(progress=lambda e, d: events.append((e, d)))
+    assert [d["step"] for e, d in events if e == "step"] == ["detection"]
+
+
+def test_pause_events_around_each_pause(fake):
+    fake.ids = ["1", "2", "3"]
+    events = []
+    _run(min_sleep=2, max_sleep=3, progress=lambda e, d: events.append((e, d)))
+    names = [e for e, _ in events]
+    assert names.count("pause") == 2 and names.count("pause_end") == 2  # pas avant le premier
+    assert [d["seconds"] for e, d in events if e == "pause"] == [2.5, 2.5]
+    # chaque pause se ferme avant l'item_start suivant
+    i = names.index("pause")
+    assert names[i + 1] == "pause_end" and names[i + 2] == "item_start"
+    assert [d for e, d in events if e == "pause_end"] == [{}, {}]
+
+
+def test_pause_end_emitted_when_stopped_during_pause(fake):
+    fake.ids = ["1", "2"]
+    events = []
+    calls = {"n": 0}
+
+    def should_stop():
+        calls["n"] += 1
+        return any(e == "pause" for e, _ in events) and calls["n"] > 3
+
+    _run(should_stop=should_stop, progress=lambda e, d: events.append((e, d)))
+    names = [e for e, _ in events]
+    assert "pause" in names and names.index("pause_end") > names.index("pause")
+
+
+def test_no_pause_event_when_sleep_is_zero(fake, monkeypatch):
+    monkeypatch.setattr(orchestrator.random, "uniform", lambda a, b: 0)
+    fake.ids = ["1", "2"]
+    events = []
+    _run(min_sleep=0, max_sleep=0, progress=lambda e, d: events.append((e, d)))
+    assert not any(e in ("pause", "pause_end") for e, _ in events)

@@ -5,6 +5,17 @@ Tous les changements notables de ce projet seront documentés dans ce fichier.
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [1.11.0] - 2026-10-10
+
+### Modifié
+- Interface : le « Journal en direct » est remplacé par un panneau **Activité** : une carte par tâche (phase en clair, barre de progression ou indicateur indéterminé, compteurs, durée qui avance seule, problèmes récents, résumé et bouton « Masquer »). Interrogation de `/api/tasks` toutes les 1,5 s pendant une tâche (8 s sinon, en pause quand l'onglet est caché). Le flux SSE ne sert plus qu'à l'indicateur de connexion et aux « Détails techniques » repliés (100 dernières lignes). La liste des profils et les statistiques se rafraîchissent à la fin d'une tâche.
+
+### Ajouté
+- `web_app.py` : état structuré par tâche (`task_states`, verrou, `set_task_state` / `update_task_state` / `record_problem`), alimenté par les callbacks download, import et extract ; toujours terminé en `done` ou `error`.
+- Route `GET /api/tasks` ; `POST /api/tasks/clear` efface aussi les états terminés (jamais ceux en cours).
+- `orchestrator.py` : événements de progression `pause` {seconds}, `pause_end` et `step` {id, step} ; les événements existants sont inchangés.
+- Tests : `tests/test_task_states.py` et événements `pause` / `step` dans `tests/test_orchestrator.py`.
+
 ## [1.10.0] - 2026-10-10
 
 ### Ajouté

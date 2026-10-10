@@ -209,6 +209,33 @@ curl -X POST http://localhost:5000/api/download \
 }
 ```
 
+### Activité des tâches
+
+```bash
+curl http://localhost:5001/api/tasks
+```
+
+Renvoie `{"tasks": [...], "server_time": <epoch>}`. Les tâches en cours viennent d'abord, puis les terminées (les plus récentes en premier). Chaque tâche (une par pseudo) contient :
+
+| Champ | Description |
+|-------|-------------|
+| `username`, `kind` | Pseudo ; `download`, `import` ou `extract` |
+| `status` | `running`, `stopping`, `done` ou `error` (jamais bloqué sur `running` après la fin du thread) |
+| `phase` | `listing`, `downloading`, `pausing`, `finishing`, `done` ou `error` |
+| `listing_active` | Le listing du profil tourne encore (flux continu) |
+| `started_at`, `updated_at`, `finished_at` | Heures (epoch, secondes) ; `finished_at` vaut `null` en cours |
+| `elapsed_s` | Durée écoulée, calculée à la lecture |
+| `current` | `{id, url, step, index}` avec `step` = `detection` ou `telechargement`, sinon `null` |
+| `pause_s` | Durée de la pause anti-ban en cours, sinon `null` |
+| `counts` | `listed`, `done`, `videos`, `slideshows`, `failed`, `unknown`, `skipped` |
+| `total` | Total à traiter, `null` tant que le listing n'est pas fini |
+| `size_mb` | Taille téléchargée |
+| `problems` | 5 derniers avertissements/erreurs `{time, level, message}`, sans doublon consécutif |
+| `last_message` | Dernière ligne d'information utile |
+| `summary` | Résumé final (`null` en cours) |
+
+Aucun chemin de fichier (cookies) n'est exposé. `POST /api/tasks/clear` efface les états terminés et conserve ceux des tâches en cours. `/stream_logs` (SSE) et `/api/task/<id>` restent disponibles.
+
 ### Statistiques
 
 ```bash

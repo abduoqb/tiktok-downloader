@@ -145,6 +145,9 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         log: callable(message, level) avec level dans info/success/warning/error.
         progress: callable(event, data) optionnel. Événements : "item_start", "item_done",
             "extraction_done" (fin du listing, total = éléments listés), "complete".
+            Événements additifs : "pause" {seconds} au début de chaque pause anti-ban et
+            "pause_end" {} à sa fin (même interrompue) ; "step" {id, step} avec step =
+            "detection" puis "telechargement" pendant le traitement d'un élément.
             En flux continu, extraction_done arrive APRÈS les traitements et
             item_start / item_done portent total=None (total inconnu pendant le listing).
         should_stop: callable() -> bool, vérifié pendant l'extraction, entre les
@@ -235,14 +238,18 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         if duration <= 0:
             return not stop_requested()
         emit(f"Pause : {duration:.1f} secondes", "info")
+        notify("pause", {"seconds": duration})
         remaining = duration
-        while remaining > 0:
-            if stop_requested():
-                return False
-            chunk = min(1.0, remaining)
-            sleep_fn(chunk)
-            remaining -= chunk
-        return not stop_requested()
+        try:
+            while remaining > 0:
+                if stop_requested():
+                    return False
+                chunk = min(1.0, remaining)
+                sleep_fn(chunk)
+                remaining -= chunk
+            return not stop_requested()
+        finally:
+            notify("pause_end", {})
 
     def record_history(video_id, url, item_type, file_size=0, file_count=1, success=True):
         """Appel sérialisé de main.save_to_history."""
@@ -274,6 +281,7 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         item_start = time.monotonic()
 
         # 1. Détection du type. Une exception ici = type inconnu (pas d'historique).
+        notify("step", {"id": video_id, "step": "detection"})
         try:
             flag = main.is_slideshow(url, username=username,
                                      cookies_browser=cookies_browser,
@@ -295,6 +303,7 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         result["type"] = item_type
 
         # 2. Téléchargement + vérification + historique
+        notify("step", {"id": video_id, "step": "telechargement"})
         try:
             if item_type == "slideshow":
                 emit(f"{label} Slideshow en cours : {url}", "info")

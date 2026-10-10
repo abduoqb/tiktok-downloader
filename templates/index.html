@@ -43,6 +43,46 @@
     .stat-val { font-size: 28px; font-weight: 800; line-height: 1.1; }
 
     .log-line { padding: 3px 0; border-bottom: 1px solid #1d1d2a; word-break: break-word; }
+
+    /* Panneau Activité : une carte par tâche */
+    .task-card { background: var(--void); border: 1px solid var(--line); border-left: 4px solid var(--violet); padding: 14px 16px; }
+    .task-card[data-status="done"] { border-left-color: var(--lime); }
+    .task-card[data-status="error"] { border-left-color: var(--rose); }
+    .task-card[data-status="stopping"] { border-left-color: var(--amber); }
+    .task-name { font-size: 17px; font-weight: 800; color: var(--ink); text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .task-name:hover { color: var(--violet); text-decoration: underline; }
+    .badge { font-size: 12px; font-weight: 800; padding: 2px 8px; border: 1px solid currentColor; white-space: nowrap; flex: none; }
+    .badge-running { color: var(--violet); }
+    .badge-done { color: var(--lime); }
+    .badge-error { color: var(--rose); }
+    .badge-stopping { color: var(--amber); }
+    .task-phase { color: var(--ink); font-size: 14px; margin-top: 8px; word-break: break-word; }
+    .task-sub { color: var(--mute); font-size: 12.5px; margin-top: 2px; }
+    .bar { height: 8px; background: var(--line); position: relative; overflow: hidden; margin-top: 10px; }
+    .bar-fill { height: 100%; background: var(--violet-fill); transition: width .3s; }
+    .bar-ind::after { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 30%; background: var(--violet-fill); animation: bar-slide 1.3s ease-in-out infinite alternate; }
+    @keyframes bar-slide { from { left: 0; } to { left: 70%; } }
+    /* Mouvement réduit : pas de bloc fixe qui ressemblerait à un pourcentage, mais des hachures sur toute la largeur */
+    @media (prefers-reduced-motion: reduce) {
+        .bar-ind::after { left: 0; width: 100%; background: repeating-linear-gradient(45deg, var(--line2) 0 6px, var(--line) 6px 12px); }
+    }
+    .bar-meta { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--dim); margin-top: 4px; }
+    .task-stats { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 10px; font-size: 13px; color: var(--dim); }
+    .task-stats b { color: var(--ink); font-weight: 800; }
+    .task-stats .bad b { color: var(--rose); }
+    .task-stats .warn b { color: var(--amber); }
+    .problems { margin-top: 10px; }
+    .problems-title { font-size: 12.5px; font-weight: 700; color: var(--dim); }
+    .problem { font-size: 12.5px; border-left: 3px solid var(--amber); padding-left: 8px; margin-top: 4px; color: var(--amber); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .problem.is-error { border-left-color: var(--rose); color: var(--rose); }
+    .problem time { color: var(--mute); margin-right: 6px; }
+    .task-summary { margin-top: 10px; font-weight: 700; color: var(--ink); }
+    .task-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+    details.tech summary { cursor: pointer; font-weight: 700; color: var(--dim); padding: 12px 20px; display: flex; align-items: center; gap: 8px; }
+    details.tech summary:hover { color: var(--ink); }
+    details.tech summary::marker { content: ''; }
+    details.tech summary .chev { transition: transform .15s; display: inline-block; }
+    details.tech[open] summary .chev { transform: rotate(90deg); }
 </style>
 {% endblock %}
 
@@ -193,18 +233,31 @@
             </div>
         </section>
 
-        <!-- Journal -->
-        <section class="lg:col-span-2 panel flex flex-col order-1 lg:order-2 lg:sticky lg:top-24 lg:self-start" aria-labelledby="titre-journal">
+        <!-- Activité : état des tâches en cours -->
+        <section class="lg:col-span-2 panel flex flex-col order-1 lg:order-2 lg:sticky lg:top-24 lg:self-start" aria-labelledby="titre-activite">
             <div class="panel-head">
-                <h2 id="titre-journal" class="h-section flex items-center gap-3">
-                    <span class="w-2.5 h-2.5 rounded-full bg-lime" aria-hidden="true"></span>
-                    Journal en direct
+                <h2 id="titre-activite" class="h-section flex items-center gap-3">
+                    <span id="activityDot" class="w-2.5 h-2.5 rounded-full bg-line2" aria-hidden="true"></span>
+                    Activité
                 </h2>
-                <button type="button" id="clearLog" class="btn btn-sm">Effacer</button>
+                <span id="activityCount" class="text-sm text-mute"></span>
             </div>
-            <div id="activityLog" role="log" aria-live="polite" tabindex="0" class="flex-1 bg-black p-4 text-[13px] overflow-y-auto h-56 lg:h-[calc(100vh-14rem)] lg:min-h-[320px]">
-                <div class="text-mute" id="logPlaceholder">Le journal s'affiche ici dès qu'un téléchargement démarre.</div>
+            <div id="activityList" class="p-4 space-y-4 lg:overflow-y-auto lg:max-h-[calc(100vh-17rem)]" tabindex="0" aria-label="Tâches en cours et terminées">
+                <p id="activityEmpty" class="text-dim py-4 px-1">Aucune tâche en cours. Lancez un téléchargement avec la barre ci-dessus.</p>
             </div>
+            <div id="activityAnnounce" class="sr-only" role="status" aria-live="polite"></div>
+            <details id="techBox" class="tech border-t border-line">
+                <summary><span class="chev" aria-hidden="true">▸</span> Détails techniques</summary>
+                <div class="px-5 pb-4">
+                    <div class="flex items-center justify-between gap-3 mb-2">
+                        <p class="text-mute text-sm">100 dernières lignes du journal du serveur, utile en cas de problème.</p>
+                        <button type="button" id="clearLog" class="btn btn-sm">Effacer</button>
+                    </div>
+                    <div id="activityLog" role="log" tabindex="0" aria-label="Journal technique" class="bg-black p-3 text-[12.5px] overflow-y-auto h-48 border border-line">
+                        <div class="text-mute" id="logPlaceholder">Le journal s'affiche ici dès qu'un téléchargement démarre.</div>
+                    </div>
+                </div>
+            </details>
         </section>
     </div>
 
@@ -236,9 +289,9 @@
             document.getElementById('connText').textContent = ok ? 'Serveur connecté' : 'Connexion perdue, nouvelle tentative…';
         }
 
-        // --- Journal en direct (SSE) ---
+        // --- Flux du serveur (SSE) : indicateur de connexion + détails techniques ---
         let eventSource = null;
-        let refreshTimer = null;
+        const MAX_LOG_LINES = 100;
 
         function startLogStream() {
             if (eventSource) return;
@@ -252,12 +305,6 @@
                 else if (data.level === 'warning') color = 'var(--amber)';
                 else if (data.level === 'success') color = 'var(--lime)';
                 addLog(data.message, color);
-
-                // Fin de tâche : on met la liste à jour sans recharger la page
-                if (/RÉSUMÉ|Aucune nouvelle|Erreur critique|Listing impossible/i.test(data.message || '')) {
-                    clearTimeout(refreshTimer);
-                    refreshTimer = setTimeout(refreshProfiles, 1500);
-                }
             };
         }
 
@@ -270,12 +317,308 @@
             entry.style.color = color || 'var(--dim)';
             entry.textContent = message;
             logDiv.appendChild(entry);
-            while (logDiv.children.length > 500) logDiv.removeChild(logDiv.firstChild);
+            while (logDiv.children.length > MAX_LOG_LINES) logDiv.removeChild(logDiv.firstChild);
             logDiv.scrollTop = logDiv.scrollHeight;
         }
 
         document.getElementById('clearLog').addEventListener('click', () => {
             document.getElementById('activityLog').innerHTML = '';
+        });
+
+        // --- Activité : état des tâches (interrogation de /api/tasks) ---
+        const POLL_FAST = 1500, POLL_SLOW = 8000;
+        let pollTimer = null, pollBusy = false, pollAgain = false;
+        let lastActive = false, firstPoll = true, refreshTimer = null;
+        const prevStatus = new Map();   // pseudo -> statut au dernier relevé
+        const cardEls = new Map();      // pseudo -> élément de carte
+        const hiddenTasks = (() => {
+            try { return new Set(JSON.parse(sessionStorage.getItem('hiddenTasks') || '[]')); }
+            catch (e) { return new Set(); }
+        })();
+
+        function h(tag, cls, text) {
+            const el = document.createElement(tag);
+            if (cls) el.className = cls;
+            if (text !== undefined && text !== null) el.textContent = text;
+            return el;
+        }
+        const isRunning = (t) => t.status === 'running' || t.status === 'stopping';
+        const taskKey = (t) => t.username + '|' + t.started_at;
+        const plural = (n, one, many) => n + ' ' + (n > 1 ? many : one);
+
+        function fmtDur(s) {
+            s = Math.max(0, Math.round(s || 0));
+            if (s < 60) return s + ' s';
+            const m = Math.floor(s / 60), r = s % 60;
+            if (m < 60) return m + ' min ' + String(r).padStart(2, '0') + ' s';
+            return Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0') + ' min';
+        }
+        function fmtSize(mb) {
+            mb = mb || 0;
+            const txt = mb >= 1024 ? (mb / 1024).toFixed(2) + ' Go' : mb.toFixed(1) + ' Mo';
+            return txt.replace('.', ',');
+        }
+
+        function phaseText(t) {
+            const c = t.counts || {};
+            if (t.status === 'error') return "La tâche s'est arrêtée sur une erreur.";
+            if (t.status === 'done') return 'Terminé';
+            if (t.status === 'stopping') return 'Arrêt en cours…';
+            if (t.phase === 'finishing') return 'Finalisation…';
+            if (t.phase === 'pausing') {
+                const n = Math.max(1, Math.round(t.pause_s || 0));
+                return 'Pause de ' + n + ' s avant la suivante';
+            }
+            if (t.phase === 'downloading' && t.current && t.current.id) {
+                return t.current.step === 'detection'
+                    ? 'Détection du type de ' + t.current.id
+                    : 'Téléchargement de la vidéo ' + t.current.id;
+            }
+            if (t.phase === 'listing' || t.listing_active) {
+                return 'Listing du profil : ' + plural(c.listed || 0, 'lien trouvé', 'liens trouvés');
+            }
+            return t.last_message || 'Traitement en cours';
+        }
+
+        function summaryText(t) {
+            const s = t.summary || {}, c = t.counts || {};
+            const dur = fmtDur(s.duration_s !== undefined && s.duration_s > 0 ? s.duration_s : t.elapsed_s);
+            if (t.kind === 'extract') {
+                const n = s.listed !== undefined ? s.listed : (c.listed || 0);
+                return plural(n, 'lien listé', 'liens listés') + ' en ' + dur;
+            }
+            const videos = s.videos !== undefined ? s.videos : (c.videos || 0);
+            const shows = s.slideshows !== undefined ? s.slideshows : (c.slideshows || 0);
+            const failed = s.failed !== undefined ? s.failed : (c.failed || 0);
+            const unknown = s.unknown !== undefined ? s.unknown : (c.unknown || 0);
+            const parts = [];
+            if (videos) parts.push(plural(videos, 'vidéo téléchargée', 'vidéos téléchargées'));
+            if (shows) parts.push(plural(shows, 'slideshow téléchargé', 'slideshows téléchargés'));
+            let txt = parts.length ? parts.join(', ') + ' en ' + dur : 'Aucune nouvelle vidéo (' + dur + ')';
+            if (failed) txt += ', ' + plural(failed, 'échec', 'échecs');
+            if (unknown) txt += ', ' + plural(unknown, 'type inconnu', 'types inconnus');
+            if (s.stopped) txt = 'Arrêtée. ' + txt;
+            return txt;
+        }
+
+        function statEl(value, label, cls) {
+            const span = h('span', cls || '');
+            span.append(h('b', '', String(value)), ' ' + label);
+            return span;
+        }
+
+        function renderCard(t, card) {
+            card.replaceChildren();
+            card.dataset.status = t.status;
+            const c = t.counts || {};
+            const running = isRunning(t);
+
+            // En-tête : pseudo + badge d'état
+            const head = h('div', 'flex items-center justify-between gap-3');
+            const left = h('div', 'flex flex-col min-w-0');
+            const link = h('a', 'task-name', '@' + t.username);
+            link.href = '/profile/' + encodeURIComponent(t.username);
+            const kind = { download: 'téléchargement', import: 'import', extract: 'listing' }[t.kind] || '';
+            left.append(link, h('span', 'text-mute text-xs', kind));
+            const label = { running: 'En cours', done: 'Terminée', error: 'Erreur', stopping: 'Arrêt en cours' }[t.status] || t.status;
+            head.append(left, h('span', 'badge badge-' + t.status, label));
+            card.append(head);
+
+            // Phase en clair
+            card.append(h('p', 'task-phase', phaseText(t)));
+            if (running && t.listing_active && t.phase !== 'listing' && t.kind !== 'import') {
+                card.append(h('p', 'task-sub', 'Le listing continue : ' + plural(c.listed || 0, 'lien trouvé', 'liens trouvés')));
+            }
+
+            // Progression
+            if (running) {
+                const done = c.done || 0;
+                const bar = h('div', 'bar');
+                if (t.total) {
+                    const pct = Math.min(100, Math.round(done * 100 / t.total));
+                    const fill = h('div', 'bar-fill');
+                    fill.style.width = pct + '%';
+                    bar.append(fill);
+                    bar.setAttribute('role', 'progressbar');
+                    bar.setAttribute('aria-label', 'Progression de @' + t.username);
+                    bar.setAttribute('aria-valuemin', '0');
+                    bar.setAttribute('aria-valuemax', String(t.total));
+                    bar.setAttribute('aria-valuenow', String(Math.min(done, t.total)));
+                    card.append(bar);
+                    const meta = h('div', 'bar-meta');
+                    meta.append(h('span', '', done + ' / ' + t.total), h('span', '', pct + ' %'));
+                    card.append(meta);
+                } else {
+                    bar.classList.add('bar-ind');
+                    bar.setAttribute('aria-hidden', 'true');
+                    card.append(bar);
+                    const meta = h('div', 'bar-meta');
+                    meta.append(h('span', '', plural(done, 'traitée', 'traitées')), h('span', '', 'total inconnu'));
+                    card.append(meta);
+                }
+            }
+
+            // Compteurs + durée
+            const stats = h('div', 'task-stats');
+            if (t.kind === 'extract') {
+                stats.append(statEl(c.listed || 0, 'liens'));
+            } else {
+                stats.append(statEl(c.videos || 0, (c.videos || 0) > 1 ? 'vidéos' : 'vidéo'));
+                stats.append(statEl(c.slideshows || 0, (c.slideshows || 0) > 1 ? 'slideshows' : 'slideshow'));
+                stats.append(statEl(c.failed || 0, (c.failed || 0) > 1 ? 'échecs' : 'échec', c.failed ? 'bad' : ''));
+                if (c.unknown) stats.append(statEl(c.unknown, 'type inconnu', 'warn'));
+                if (c.skipped) stats.append(statEl(c.skipped, (c.skipped > 1 ? 'ignorées' : 'ignorée')));
+                stats.append(statEl(fmtSize(t.size_mb), ''));
+            }
+            const dur = statEl('', '');
+            dur.replaceChildren('Durée ');
+            const durVal = h('b', '', fmtDur(t.elapsed_s));
+            durVal.dataset.elapsed = '1';
+            dur.append(durVal);
+            stats.append(dur);
+            card.append(stats);
+
+            // Problèmes récents (3 derniers visibles)
+            const problems = (t.problems || []).slice(-3);
+            if (problems.length) {
+                const box = h('div', 'problems');
+                box.append(h('p', 'problems-title', 'Problèmes récents'));
+                problems.forEach((p) => {
+                    const line = h('p', 'problem' + (p.level === 'error' ? ' is-error' : ''));
+                    line.title = p.message;
+                    line.append(h('time', '', p.time), p.message);
+                    box.append(line);
+                });
+                card.append(box);
+            }
+
+            // Résumé + masquer pour une tâche terminée
+            if (!running) {
+                if (t.status === 'done') card.append(h('p', 'task-summary', summaryText(t)));
+                const foot = h('div', 'task-foot');
+                foot.append(h('span'));
+                const btn = h('button', 'btn btn-sm', 'Masquer');
+                btn.type = 'button';
+                btn.setAttribute('aria-label', 'Masquer la tâche de @' + t.username);
+                btn.addEventListener('click', () => hideTask(t));
+                foot.append(btn);
+                card.append(foot);
+            }
+        }
+
+        function hideTask(t) {
+            hiddenTasks.add(taskKey(t));
+            try { sessionStorage.setItem('hiddenTasks', JSON.stringify([...hiddenTasks])); } catch (e) { /* ignoré */ }
+            const el = cardEls.get(t.username);
+            if (el) { el.remove(); cardEls.delete(t.username); }
+            updateEmptyState();
+            const list = document.getElementById('activityList');
+            if (list) list.focus();
+        }
+
+        function updateEmptyState() {
+            document.getElementById('activityEmpty').hidden = cardEls.size > 0;
+        }
+
+        function announce(text) {
+            document.getElementById('activityAnnounce').textContent = text;
+        }
+
+        function applyTasks(tasks) {
+            const visible = tasks.filter((t) => !hiddenTasks.has(taskKey(t)));
+            const perfNow = performance.now();
+            const list = document.getElementById('activityList');
+            const seen = new Set();
+            let transitioned = false, msg = '';
+
+            visible.forEach((t) => {
+                seen.add(t.username);
+                let card = cardEls.get(t.username);
+                const sig = JSON.stringify(Object.assign({}, t, { elapsed_s: 0, updated_at: 0, pause_started_at: 0 }));
+                if (!card) {
+                    card = h('article', 'task-card');
+                    card.setAttribute('aria-label', 'Tâche @' + t.username);
+                    cardEls.set(t.username, card);
+                }
+                if (card.dataset.sig !== sig) {
+                    renderCard(t, card);
+                    card.dataset.sig = sig;
+                }
+                // Base du chronomètre local : durée serveur + temps écoulé depuis ce relevé
+                card.dataset.base = String(t.elapsed_s || 0);
+                card.dataset.at = String(perfNow);
+                card.dataset.running = isRunning(t) ? '1' : '';
+
+                const before = prevStatus.get(t.username);
+                if (before && before.key === taskKey(t) && before.running && !isRunning(t)) {
+                    transitioned = true;
+                    msg = t.status === 'error' ? 'Tâche de @' + t.username + ' terminée avec une erreur.'
+                                               : 'Tâche de @' + t.username + ' terminée.';
+                }
+                prevStatus.set(t.username, { key: taskKey(t), running: isRunning(t) });
+            });
+
+            cardEls.forEach((el, name) => {
+                if (!seen.has(name)) { el.remove(); cardEls.delete(name); }
+            });
+            // Ordre du serveur, sans déplacer inutilement les cartes (conserve le focus)
+            const wanted = visible.map((t) => cardEls.get(t.username));
+            const current = Array.from(list.querySelectorAll(':scope > .task-card'));
+            if (wanted.length !== current.length || wanted.some((el, i) => el !== current[i])) {
+                wanted.forEach((el) => list.appendChild(el));
+            }
+            updateEmptyState();
+
+            const running = tasks.filter(isRunning).length;
+            document.getElementById('activityCount').textContent = running ? plural(running, 'tâche en cours', 'tâches en cours') : '';
+            document.getElementById('activityDot').className = 'w-2.5 h-2.5 rounded-full ' + (running ? 'bg-lime' : 'bg-line2');
+
+            if (transitioned) {
+                announce(msg);
+                clearTimeout(refreshTimer);
+                refreshTimer = setTimeout(refreshProfiles, 800);
+            }
+            firstPoll = false;
+            return running > 0;
+        }
+
+        // Le chronomètre avance seul entre deux relevés (aucune requête)
+        setInterval(() => {
+            const perfNow = performance.now();
+            document.querySelectorAll('.task-card[data-running="1"]').forEach((card) => {
+                const el = card.querySelector('[data-elapsed]');
+                if (el) el.textContent = fmtDur(parseFloat(card.dataset.base) + (perfNow - parseFloat(card.dataset.at)) / 1000);
+            });
+        }, 1000);
+
+        async function pollTasks() {
+            if (pollBusy) { pollAgain = true; return; }
+            pollBusy = true;
+            try {
+                const res = await fetch('/api/tasks', { cache: 'no-store' });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                lastActive = applyTasks(data.tasks || []);
+            } catch (e) { /* serveur injoignable : on réessaie au prochain tour */ }
+            pollBusy = false;
+            if (pollAgain) { pollAgain = false; pollTasks(); return; }
+            schedulePoll();
+        }
+
+        function schedulePoll() {
+            clearTimeout(pollTimer);
+            if (document.hidden) return;   // onglet caché : on attend visibilitychange
+            pollTimer = setTimeout(pollTasks, lastActive ? POLL_FAST : POLL_SLOW);
+        }
+
+        function triggerPoll() {
+            clearTimeout(pollTimer);
+            lastActive = true;
+            pollTasks();
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) clearTimeout(pollTimer); else { clearTimeout(pollTimer); pollTasks(); }
         });
 
         // --- Statistiques et liste ---
@@ -309,6 +652,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             startLogStream();
             loadStats();
+            pollTasks();
         });
 
         // --- Lancement ---
@@ -345,7 +689,7 @@
             try {
                 let res;
                 if (kind === 'download') {
-                    showNotification('Téléchargement de @' + f.username + ' démarré. Suivez le journal.', 'info');
+                    showNotification('Téléchargement de @' + f.username + ' démarré. Suivez le panneau Activité.', 'info');
                     res = await post('/api/download', f);
                 } else {
                     showNotification('Liste des liens de @' + f.username + ' en cours.', 'info');
@@ -353,6 +697,7 @@
                 }
                 if (res.ok && (res.data.success || res.data.status === 'started')) {
                     showNotification(res.data.message, 'success');
+                    triggerPoll();
                 } else {
                     showNotification(res.data.error || 'Le serveur a refusé la demande.', 'error');
                 }
@@ -431,9 +776,10 @@
                     min_sleep: f.min_sleep, max_sleep: f.max_sleep, force_update: f.force_update
                 });
                 if (res.ok && res.data.status === 'started') {
-                    let msg = res.data.message + '. Suivez le journal.';
+                    let msg = res.data.message + '. Suivez le panneau Activité.';
                     if (res.data.ignored) msg += ' ' + res.data.ignored + ' lien(s) court(s) ignoré(s).';
                     showNotification(msg, 'success');
+                    triggerPoll();
                 } else {
                     showNotification(res.data.error || 'Le serveur a refusé la demande.', 'error');
                 }
@@ -446,10 +792,12 @@
 
         // --- Mise à jour d'un profil existant ---
         async function syncProfile(username) {
-            showNotification('Mise à jour de @' + username + ' démarrée. Suivez le journal.', 'info');
+            showNotification('Mise à jour de @' + username + ' démarrée. Suivez le panneau Activité.', 'info');
             try {
                 const res = await post('/api/download', { username, platform: 'tiktok', min_sleep: 2, max_sleep: 6, force_update: false });
-                if (!(res.ok && (res.data.success || res.data.status === 'started'))) {
+                if (res.ok && (res.data.success || res.data.status === 'started')) {
+                    triggerPoll();
+                } else {
                     showNotification(res.data.error || 'Le serveur a refusé la demande.', 'error');
                 }
             } catch (e) { showNotification('Serveur injoignable.', 'error'); }

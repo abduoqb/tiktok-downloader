@@ -41,7 +41,7 @@ python main.py nom_du_compte --download --cookies-file tiktok.com_cookies.txt
 - Nouvelle tentative automatique (3 essais) et pauses aléatoires anti-bannissement.
 - Un téléchargement n'est marqué réussi que si le fichier existe vraiment.
 - Les téléchargements en échec sont mémorisés ; `--force-update` les relance.
-- Interface web : logs en temps réel, lecteur vidéo intégré, statistiques, gestion des profils.
+- Interface web : panneau Activité (état des tâches en cours), lecteur vidéo intégré, statistiques, gestion des profils.
 - Mode URL unique : télécharger une vidéo à partir de son lien.
 
 ## Installation
@@ -85,7 +85,7 @@ python web_app.py
 Ouvrez `http://localhost:5001`.
 
 1. Ajoutez un profil (nom d'utilisateur, sans le `@`).
-2. Cliquez sur **Download** : réglez la limite et les pauses puis lancez. Les logs s'affichent en direct.
+2. Cliquez sur **Download** : réglez la limite et les pauses puis lancez. Le panneau **Activité** (à droite) montre en direct, pour chaque tâche : la phase (listing, détection, téléchargement, pause), la progression, les compteurs, la durée et les problèmes récents. Les lignes brutes du journal restent disponibles dans « Détails techniques » (repliés).
 3. Utilisez **Sync** sur un profil existant pour ne récupérer que les nouveautés.
 4. Ouvrez la page d'un profil pour lire les vidéos dans le navigateur.
 

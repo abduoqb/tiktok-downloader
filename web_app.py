@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import math
+import re
 import threading
 import time
 import traceback
@@ -56,6 +57,10 @@ def cleanup_and_shutdown():
     # Marquer toutes les tâches comme "stopping"
     for username in list(active_tasks.keys()):
         active_tasks[username] = "stopping"
+    with _task_lock:
+        for state in task_states.values():
+            if state["status"] == "running":
+                state["status"] = "stopping"
 
     # Attendre que les threads se terminent (max 5 secondes)
     print(f"[SHUTDOWN] Attente de {len(active_threads)} threads actifs...")
@@ -207,6 +212,258 @@ def emit_progress_bar(current, total, elapsed_seconds, total_size_mb):
 
     emit_log(progress_line, "info", "PROGRESS")
 
+# --- ÉTAT STRUCTURÉ DES TÂCHES (panneau « Activité ») ---
+
+# Un état par pseudo, protégé par un verrou. Les adaptateurs download / import / extract le
+# mettent à jour depuis leurs callbacks progress / log ; GET /api/tasks le sérialise.
+task_states = {}
+_task_lock = threading.RLock()
+
+MAX_PROBLEMS = 5
+MAX_MESSAGE_LEN = 300
+_RUNNING_STATUSES = ("running", "stopping")
+_COUNT_KEYS = ("listed", "done", "videos", "slideshows", "failed", "unknown", "skipped")
+# Chemins de fichiers (cookies, .txt) masqués dans les messages exposés par l'API
+_PATH_RE = re.compile(r"(?:[A-Za-z]:)?[\\/][^\s'\"]*(?:cookie|\.txt)[^\s'\"]*", re.IGNORECASE)
+
+
+def _now():
+    """Heure courante (epoch, secondes). Indépendante de time.time (patché par certains tests)."""
+    return datetime.now().timestamp()
+
+
+def _clean_message(message):
+    """Message court et sans donnée sensible (chemins de cookies masqués), ou None."""
+    if message is None:
+        return None
+    text = str(message).strip()
+    if not text or text.startswith("Using cookies"):
+        return None
+    text = _PATH_RE.sub("[fichier]", text)
+    text = " ".join(text.split())
+    if len(text) > MAX_MESSAGE_LEN:
+        text = text[:MAX_MESSAGE_LEN - 1] + "…"
+    return text
+
+
+def set_task_state(username, kind, **fields):
+    """Crée (ou remplace) l'état d'une tâche : status 'running', phase 'listing'."""
+    now = _now()
+    state = {
+        "username": username, "kind": kind, "status": "running", "phase": "listing",
+        "listing_active": kind != "import",
+        "started_at": now, "updated_at": now, "finished_at": None,
+        "current": None, "pause_s": None, "pause_started_at": None,
+        "counts": {key: 0 for key in _COUNT_KEYS},
+        "total": None, "size_mb": 0.0, "problems": [], "last_message": None, "summary": None,
+    }
+    for key, value in fields.items():
+        if key == "counts":
+            state["counts"].update(value)
+        else:
+            state[key] = value
+    with _task_lock:
+        task_states[username] = state
+    return state
+
+
+def update_task_state(username, **fields):
+    """Met à jour des champs de l'état (counts est fusionné). No-op si l'état n'existe pas."""
+    with _task_lock:
+        state = task_states.get(username)
+        if state is None:
+            return None
+        for key, value in fields.items():
+            if key == "counts":
+                state["counts"].update(value)
+            else:
+                state[key] = value
+        state["updated_at"] = _now()
+        return state
+
+
+def record_problem(username, message, level="warning"):
+    """Ajoute un avertissement / une erreur (5 derniers, sans doublon consécutif)."""
+    text = _clean_message(message)
+    if text is None:
+        return
+    with _task_lock:
+        state = task_states.get(username)
+        if state is None:
+            return
+        problems = state["problems"]
+        if not (problems and problems[-1]["message"] == text):
+            problems.append({"time": datetime.now().strftime("%H:%M:%S"),
+                             "level": "error" if level == "error" else "warning",
+                             "message": text})
+            del problems[:-MAX_PROBLEMS]
+        state["updated_at"] = _now()
+
+
+def finish_task_state(username, status="done", summary=None):
+    """Termine l'état ('done' ou 'error'). Idempotent : un état déjà terminé n'est pas modifié."""
+    with _task_lock:
+        state = task_states.get(username)
+        if state is None or state["status"] not in _RUNNING_STATUSES:
+            return
+        now = _now()
+        final = "error" if status == "error" else "done"
+        state["status"] = final
+        state["phase"] = final
+        state["listing_active"] = False
+        state["pause_s"] = None
+        state["pause_started_at"] = None
+        state["current"] = None
+        state["finished_at"] = now
+        state["updated_at"] = now
+        if summary is not None:
+            state["summary"] = summary
+            for key in _COUNT_KEYS:
+                if key in summary:
+                    state["counts"][key] = summary[key]
+            if "size_mb" in summary:
+                state["size_mb"] = summary["size_mb"]
+
+
+def ensure_task_state(username, kind):
+    """État de la tâche en cours pour ce pseudo (créé si absent ou déjà terminé)."""
+    with _task_lock:
+        state = task_states.get(username)
+        if state is None or state["status"] not in _RUNNING_STATUSES or state["kind"] != kind:
+            return set_task_state(username, kind)
+        return state
+
+
+def _serialize_state(state, now=None):
+    now = _now() if now is None else now
+    out = json.loads(json.dumps(state))  # copie profonde, JSON-compatible
+    end = out["finished_at"] if out["finished_at"] is not None else now
+    out["elapsed_s"] = round(max(0.0, end - out["started_at"]), 1)
+    if out["status"] == "running" and active_tasks.get(out["username"]) == "stopping":
+        out["status"] = "stopping"
+    return out
+
+
+def get_task_states():
+    """États sérialisés : en cours d'abord, puis terminés du plus récent au plus ancien."""
+    now = _now()
+    with _task_lock:
+        items = [_serialize_state(state, now) for state in task_states.values()]
+    running = [t for t in items if t["status"] in _RUNNING_STATUSES]
+    finished = [t for t in items if t["status"] not in _RUNNING_STATUSES]
+    running.sort(key=lambda t: t["started_at"], reverse=True)
+    finished.sort(key=lambda t: t["finished_at"] or 0, reverse=True)
+    return running + finished
+
+
+def clear_finished_task_states():
+    """Efface les états terminés ('done' / 'error') ; les tâches en cours sont conservées."""
+    with _task_lock:
+        names = [n for n, st in task_states.items() if st["status"] not in _RUNNING_STATUSES]
+        for name in names:
+            del task_states[name]
+    return len(names)
+
+
+def _task_log(username, module):
+    """Callback log(msg, level) : journal SSE + état structuré (dernier message, problèmes)."""
+    def log(msg, level="info"):
+        emit_log(msg, level, module)
+        try:
+            if level in ("warning", "error"):
+                record_problem(username, msg, level)
+            text = _clean_message(msg)
+            if text is not None:
+                update_task_state(username, last_message=text)
+        except Exception:
+            pass
+    return log
+
+
+def _apply_progress(username, event, data):
+    """Traduit un événement de progression de l'orchestrateur en mise à jour d'état."""
+    data = data or {}
+    with _task_lock:
+        state = task_states.get(username)
+        if state is None:
+            return
+        counts = state["counts"]
+        if event == "item_start":
+            index = data.get("index")
+            state["phase"] = "downloading"
+            state["pause_s"] = None
+            state["pause_started_at"] = None
+            state["current"] = {"id": data.get("id"), "url": data.get("url"),
+                                "step": "detection", "index": index}
+            if isinstance(index, int):
+                counts["listed"] = max(counts["listed"], index + 1)
+            if data.get("total"):
+                state["total"] = data["total"]
+                counts["listed"] = max(counts["listed"], data["total"])
+        elif event == "step":
+            current = state["current"]
+            if current is None or current.get("id") != data.get("id"):
+                current = state["current"] = {"id": data.get("id"), "url": None,
+                                              "step": None, "index": None}
+            current["step"] = data.get("step")
+            state["phase"] = "downloading"
+        elif event == "pause":
+            state["phase"] = "pausing"
+            state["pause_s"] = data.get("seconds")
+            state["pause_started_at"] = _now()
+        elif event == "pause_end":
+            state["pause_s"] = None
+            state["pause_started_at"] = None
+            if state["phase"] == "pausing":
+                state["phase"] = "downloading"
+        elif event == "item_done":
+            if data.get("success"):
+                key = "slideshows" if data.get("type") == "slideshow" else "videos"
+            else:
+                key = "unknown" if data.get("type") == "unknown" else "failed"
+            counts[key] += 1
+            done = data.get("done")
+            counts["done"] = done if isinstance(done, int) else counts["done"] + 1
+            if isinstance(data.get("total_size_mb"), (int, float)):
+                state["size_mb"] = round(data["total_size_mb"], 2)
+            if data.get("total"):
+                state["total"] = data["total"]
+            state["current"] = None
+            state["pause_s"] = None
+            state["phase"] = "listing" if state["listing_active"] else "downloading"
+        elif event == "extraction_done":
+            total = data.get("total") or 0
+            state["listing_active"] = False
+            counts["listed"] = max(counts["listed"], total)
+            state["total"] = max(total, counts["done"]) or state["total"]
+            state["phase"] = "downloading"
+        elif event == "complete":
+            state["listing_active"] = False
+            state["phase"] = "finishing"
+            state["pause_s"] = None
+            for key in ("videos", "slideshows", "failed", "unknown", "skipped"):
+                if isinstance(data.get(key), int):
+                    counts[key] = data[key]
+            if isinstance(data.get("size_mb"), (int, float)):
+                state["size_mb"] = round(data["size_mb"], 2)
+        state["updated_at"] = _now()
+
+
+def _summary_from_stats(stats):
+    """Résumé final (dict JSON) à partir des statistiques de l'orchestrateur."""
+    error = _clean_message(stats.get("extraction_error"))
+    return {
+        "videos": stats.get("videos", 0), "slideshows": stats.get("slideshows", 0),
+        "failed": stats.get("failed", 0), "unknown": stats.get("unknown", 0),
+        "skipped": stats.get("skipped", 0), "downloaded": stats.get("downloaded", 0),
+        "processed": stats.get("processed", 0),
+        "total_extracted": stats.get("total_extracted", 0),
+        "size_mb": round(stats.get("size_mb", 0.0) or 0.0, 2),
+        "duration_s": round(stats.get("duration_s", 0.0) or 0.0, 1),
+        "stopped": bool(stats.get("stopped")), "extraction_error": error,
+    }
+
+
 # 2. Route SSE (Générateur)
 @app.route('/stream_logs')
 def stream_logs():
@@ -327,6 +584,7 @@ def extract_links():
             if username in active_tasks:
                 del active_tasks[username]
 
+    set_task_state(username, "extract", last_message="Démarrage du listing")
     thread = threading.Thread(target=background_extract_task, args=(username, platform, limit))
     thread.daemon = True
     thread.start()
@@ -340,13 +598,20 @@ def background_extract_task(username, platform, limit):
     """Background task to extract video links."""
     global active_tasks
     active_tasks[username] = "running"
+    ensure_task_state(username, "extract")
+    final_status = "error"
+    summary = None
+    count = 0
 
     try:
         emit_log(f"Démarrage de l'extraction pour @{username}...", "info", "SCAN")
+        update_task_state(username, last_message="Listing du profil en cours")
 
         # Vérifier si shutdown demandé
         if shutdown_event.is_set():
             emit_log("Arrêt demandé, extraction annulée", "warning", "SCAN")
+            final_status = "done"
+            summary = {"listed": 0, "stopped": True}
             return
 
         # Ensure user directory exists
@@ -358,8 +623,7 @@ def background_extract_task(username, platform, limit):
         history = load_history(username)
 
         # Define a callback for logging from main.py
-        def log_callback(msg, level="info"):
-            emit_log(msg, level, "SCAN")
+        log_callback = _task_log(username, "SCAN")
 
         # Extract links using generator
         # Cookies file for TikTok authentication
@@ -377,23 +641,30 @@ def background_extract_task(username, platform, limit):
         count = 0
         for video in video_generator:
             # Vérifier si shutdown demandé
-            if shutdown_event.is_set():
+            if shutdown_event.is_set() or active_tasks.get(username) == "stopping":
                 emit_log(f"Arrêt demandé, extraction interrompue à {count} vidéos", "warning", "SCAN")
                 break
 
             # Save incrementally
             append_link_to_file(username, video['url'])
             count += 1
+            update_task_state(username, counts={"listed": count})
             if count % 5 == 0:
                  emit_log(f"{count} vidéos trouvées...", "info", "SCAN")
 
         if not shutdown_event.is_set():
             emit_log(f"Extraction terminée: {count} vidéos trouvées.", "success", "SCAN")
-        
+        final_status = "done"
+        summary = {"listed": count, "stopped": shutdown_event.is_set()}
+        update_task_state(username, last_message=f"Extraction terminée : {count} liens trouvés")
+
     except Exception as e:
         emit_log(f"Erreur extraction: {str(e)}", "error", "SCAN")
+        record_problem(username, f"Erreur extraction : {e}", "error")
+        summary = {"listed": count, "stopped": False}
         traceback.print_exc()
     finally:
+        finish_task_state(username, final_status, summary)
         if active_tasks.get(username) != "stopping":
             active_tasks[username] = "done"
         # Clean up thread reference
@@ -454,6 +725,7 @@ def start_download():
                 del active_tasks[username]
 
     # Start background task
+    set_task_state(username, "download", last_message="Démarrage")
     thread = threading.Thread(
         target=background_download_task,
         args=(username, platform, min_sleep, max_sleep, force_update, limit),
@@ -522,9 +794,11 @@ def start_import():
     thread = threading.Thread(
         target=background_import_task, args=(plan, min_sleep, max_sleep, force_update),
         daemon=True)
-    for name in names:
+    for name, items in plan:
         active_threads[name] = thread
         active_tasks[name] = "queued"
+        set_task_state(name, "import", phase="downloading", total=len(items),
+                       counts={"listed": len(items)}, last_message="En attente de son tour")
     thread.start()
 
     counts = {name: len(items) for name, items in plan}
@@ -572,11 +846,17 @@ def clear_all_tasks():
     count = len(active_tasks)
     active_tasks = {}
     active_threads = {}
+    clear_finished_task_states()  # les tâches en cours gardent leur état
     emit_log(f"Toutes les tâches ont été réinitialisées ({count} tâches)", "warning", "SYSTEM")
     return jsonify({
         'success': True,
         'message': f'{count} tasks cleared'
     })
+
+@app.route('/api/tasks')
+def list_tasks():
+    """États structurés des tâches (en cours d'abord, puis terminées les plus récentes)."""
+    return jsonify({'tasks': get_task_states(), 'server_time': _now()})
 
 @app.route('/api/profile/<username>/delete', methods=['DELETE'])
 def delete_profile(username):
@@ -792,16 +1072,23 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
     """Background task: mince adaptateur autour de orchestrator.run_download."""
     global active_tasks
     active_tasks[username] = "running"
+    ensure_task_state(username, "download")
+    final_status = "error"  # jamais « running » à la sortie : écrasé en 'done' si tout va bien
+    summary = None
 
     # Cookies file for TikTok authentication
     cookies_file = ytdlp_options.default_cookies_file()
     if not cookies_file:
         emit_log("⚠ Fichier cookies non trouvé, téléchargement sans authentification", "warning", "SYSTEM")
+        record_problem(username, "Fichier cookies non trouvé : téléchargement sans authentification")
 
     try:
+        update_task_state(username, last_message="Analyse du profil")
         # Vérifier si shutdown demandé
         if shutdown_event.is_set():
             emit_log("Arrêt demandé, téléchargement annulé", "warning", "DOWNLOAD")
+            final_status = "done"
+            summary = {"stopped": True}
             return
 
         try:
@@ -809,8 +1096,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         except Exception:
             history_count = 0
 
-        def log(msg, level="info"):
-            emit_log(msg, level, "DOWNLOAD")
+        log = _task_log(username, "DOWNLOAD")
 
         def should_stop():
             return active_tasks.get(username) == "stopping" or shutdown_event.is_set()
@@ -818,6 +1104,10 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         state = {"total": 0, "ok": 0, "last_progress": time.time()}
 
         def progress(event, data):
+            try:
+                _apply_progress(username, event, data)
+            except Exception:
+                pass
             if event == "extraction_done":
                 state["total"] = data["total"]
                 if data["total"] > 0:
@@ -860,19 +1150,27 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         total_downloaded = stats["downloaded"]
         processed = stats["processed"]
 
+        summary = _summary_from_stats(stats)
+
         if stats.get("extraction_error") and stats["total_extracted"] == 0:
             emit_log(f"Extraction échouée pour @{username} : {stats['extraction_error']}", "error", "DOWNLOAD")
+            record_problem(username, f"Extraction échouée : {stats['extraction_error']}", "error")
+            final_status = "error"
             return
 
+        final_status = "done"
         if processed == 0 and unknown_count == 0:
             return  # rien traité : l'orchestrateur a déjà loggé la raison
 
         emit_download_summary(username, stats)
 
     except Exception as e:
+        final_status = "error"
         emit_log(f"Erreur critique: {str(e)}", "error", "SYSTEM")
+        record_problem(username, f"Erreur critique : {e}", "error")
         traceback.print_exc()
     finally:
+        finish_task_state(username, final_status, summary)
         if active_tasks.get(username) != "stopping":
             active_tasks[username] = "done"
         # Clean up thread reference
@@ -884,8 +1182,15 @@ def background_import_task(plan, min_sleep, max_sleep, force_update=False):
     global active_tasks
     names = [name for name, _ in plan]
     cookies_file = ytdlp_options.default_cookies_file()
+    outer_error = False
+    for username, items in plan:  # état visible dès le départ (aussi pour les pseudos en attente)
+        if task_states.get(username, {}).get("status") not in _RUNNING_STATUSES:
+            set_task_state(username, "import", phase="downloading", total=len(items),
+                           counts={"listed": len(items)}, last_message="En attente de son tour")
     if not cookies_file:
         emit_log("Fichier cookies non trouvé, import sans authentification", "warning", "SYSTEM")
+        for name in names:
+            record_problem(name, "Fichier cookies non trouvé : import sans authentification")
 
     try:
         for username, items in plan:
@@ -893,16 +1198,20 @@ def background_import_task(plan, min_sleep, max_sleep, force_update=False):
                 emit_log("Arrêt demandé, import interrompu", "warning", "IMPORT")
                 break
             active_tasks[username] = "running"
+            update_task_state(username, last_message="Import en cours")
 
-            def log(msg, level="info"):
-                emit_log(msg, level, "IMPORT")
+            log = _task_log(username, "IMPORT")
 
             def should_stop(username=username):
                 return active_tasks.get(username) == "stopping" or shutdown_event.is_set()
 
             state = {"ok": 0, "last_progress": time.time()}
 
-            def progress(event, data, state=state):
+            def progress(event, data, state=state, username=username):
+                try:
+                    _apply_progress(username, event, data)
+                except Exception:
+                    pass
                 if event == "item_done" and data.get("success"):
                     state["ok"] += 1
                     now = time.time()
@@ -916,6 +1225,7 @@ def background_import_task(plan, min_sleep, max_sleep, force_update=False):
                     username, items, min_sleep=min_sleep, max_sleep=max_sleep,
                     cookies_file=cookies_file, force_update=force_update,
                     log=log, progress=progress, should_stop=should_stop)
+                finish_task_state(username, "done", _summary_from_stats(stats))
                 if stats["processed"] > 0 or stats["unknown"] > 0:
                     emit_download_summary(username, stats)
                 else:
@@ -923,15 +1233,22 @@ def background_import_task(plan, min_sleep, max_sleep, force_update=False):
                              f"({stats['skipped']} déjà connue(s))", "warning", "IMPORT")
             except Exception as e:
                 emit_log(f"Erreur critique: {str(e)}", "error", "SYSTEM")
+                record_problem(username, f"Erreur critique : {e}", "error")
+                finish_task_state(username, "error")
                 traceback.print_exc()
             if active_tasks.get(username) != "stopping":
                 active_tasks[username] = "done"
     except Exception as e:
+        outer_error = True
         emit_log(f"Erreur critique: {str(e)}", "error", "SYSTEM")
         traceback.print_exc()
     finally:
         me = threading.current_thread()
         for name in names:
+            # Pseudos non traités (arrêt, erreur) : jamais laissés sur « running »
+            if outer_error:
+                record_problem(name, "Import interrompu par une erreur", "error")
+            finish_task_state(name, "error" if outer_error else "done", {"stopped": True})
             if active_tasks.get(name) != "stopping":
                 active_tasks[name] = "done"
             if active_threads.get(name) is me:
