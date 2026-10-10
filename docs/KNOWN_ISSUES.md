@@ -97,6 +97,25 @@ Actuellement, les logs SSE montrent la progression mais pas de barre visuelle.
 
 ---
 
+### Télécharger au fil du listing (flux continu) plutôt qu'en deux temps
+**Priorité**: Moyenne (idée mise de côté)
+
+Aujourd'hui l'appli liste tout le profil puis télécharge. Sur un gros profil :
+longue attente avant le premier téléchargement, listing gallery-dl coupé par le
+délai de 300 s, rien de téléchargé si on interrompt pendant le listing.
+
+**Suggestion**: lire la sortie de `gallery-dl -g` ligne par ligne (`Popen`) et
+traiter chaque vidéo dès qu'elle arrive, plutôt que des lots `--range 1-10`,
+`11-20` qui reparcourent le profil à chaque fois (et `--range` compte des
+fichiers, pas des posts). L'arrêt incrémental (10 vidéos connues) et `limit`
+fonctionnent naturellement en flux.
+
+**À prévoir**: plus de total connu à l'avance (progression « i traitées » au
+lieu de « i/n »), arrêt propre si le listing échoue en cours de route, et
+adapter le mode `workers>1` (file d'attente producteur/consommateur).
+
+---
+
 ## 🔧 Signaler un bug
 
 Si vous rencontrez un nouveau problème:
