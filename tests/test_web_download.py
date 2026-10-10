@@ -138,3 +138,38 @@ def test_default_cookies_are_passed(client, monkeypatch):
     assert kwargs["max_sleep"] == 2
     assert kwargs["force_update"] is True
     assert callable(kwargs["should_stop"])
+
+
+def test_progress_adapter_handles_unknown_total(client, monkeypatch):
+    """L'adaptateur de progression ne plante pas avec total None (flux continu)."""
+    logs = []
+    monkeypatch.setattr(web_app, "emit_log", lambda msg, level="info", module="X": logs.append(msg))
+    times = iter([0, 1000, 2000, 3000, 4000, 5000, 6000])
+    monkeypatch.setattr(web_app.time, "time", lambda: next(times, 9999))
+
+    def fake(username, platform="tiktok", progress=None, **kwargs):
+        progress("item_start", {"index": 0, "total": None, "id": "1", "url": "u"})
+        for i in range(3):
+            progress("item_done", {"success": True, "total": None, "done": i + 1,
+                                   "elapsed_s": 10.0, "total_size_mb": 1.5})
+        progress("extraction_done", {"total": 3})
+        stats = _fake_stats()
+        stats.update(videos=3, downloaded=3, processed=3, total_extracted=3, duration_s=30.0)
+        return stats
+
+    monkeypatch.setattr(orchestrator, "run_download", fake)
+    web_app.background_download_task("bob", "tiktok", 0, 0)
+    assert any("traitées" in m for m in logs)
+    assert not any("Erreur critique" in m for m in logs)
+    assert any("RÉSUMÉ" in m for m in logs)
+    assert web_app.active_tasks["bob"] == "done"
+
+
+def test_emit_progress_bar_unknown_total(monkeypatch):
+    logs = []
+    monkeypatch.setattr(web_app, "emit_log", lambda msg, level="info", module="X": logs.append(msg))
+    web_app.emit_progress_bar(4, None, 65.0, 2.0)
+    web_app.emit_progress_bar(4, 0, 65.0, 2.0)
+    assert logs[0] == "4 traitées | 1m05s | 2.0 MB" == logs[1]
+    web_app.emit_progress_bar(2, 4, 65.0, 2.0)
+    assert "2/4 (50%)" in logs[2]

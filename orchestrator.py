@@ -3,10 +3,12 @@ Orchestrateur de téléchargement unique (CLI, web, pipeline).
 
 Point d'entrée : run_download(). Il enchaîne :
     1. chargement de l'historique (mode incrémental) ;
-    2. extraction des liens via main.get_video_links (limit et force_update respectés) ;
-    3. sauvegarde des liens (main.save_links_to_file) ;
-    4. pour chaque élément : détection du type (main.is_slideshow), téléchargement
-       (main.download_slideshow / main.download_video), vérification, historique.
+    2. listing paresseux via main.get_video_links (limit et force_update respectés) ;
+    3. pour chaque élément, DÈS qu'il est listé (workers=1, flux continu) : pause anti-ban,
+       détection du type (main.is_slideshow), téléchargement (main.download_slideshow /
+       main.download_video), vérification, historique ;
+    4. sauvegarde des liens listés (main.save_links_to_file), une seule fois en fin de run
+       (aussi en cas d'arrêt ou d'erreur).
 
 Règles métier :
     - is_slideshow renvoie True / False / None. None = type inconnu : erreur loggée,
@@ -21,9 +23,12 @@ Anti-ban : pause random.uniform(min_sleep, max_sleep) avant chaque élément sau
 premier (y compris après un échec), découpée en tranches de 1 s maximum pour
 réagir rapidement à should_stop().
 
-Parallélisme : workers=1 (défaut) = exécution strictement séquentielle, sans thread.
-workers>1 = ThreadPoolExecutor ; chaque tâche dort quand même avant de démarrer,
-mais plusieurs requêtes partent en même temps : le risque de rate-limit / ban
+Parallélisme : workers=1 (défaut) = exécution strictement séquentielle, sans thread, en flux
+continu : le premier téléchargement démarre pendant que le listing avance (le total n'est
+connu qu'à la fin du listing : item_start / item_done portent total=None). workers>1 =
+comportement par lots inchangé : le listing est d'abord collecté en entier, puis un
+ThreadPoolExecutor traite les éléments (total connu) ; chaque tâche dort quand même avant
+de démarrer, mais plusieurs requêtes partent en même temps : le risque de rate-limit / ban
 TikTok augmente avec le nombre de workers.
 
 Ce module appelle main via `import main` (et non `from main import ...`) pour que
@@ -125,11 +130,14 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
             main.get_video_links et du filtre de saut). Sans force_update, les échecs
             historisés restent ignorés comme les succès.
         cookies_file, cookies_browser: Transmis à toutes les fonctions de main.
-        workers: 1 = séquentiel sans thread ; >1 = pool de threads (augmente le risque
-            de rate-limit).
+        workers: 1 = séquentiel sans thread, en flux continu (téléchargement pendant le
+            listing) ; >1 = listing complet d'abord, puis pool de threads (augmente le
+            risque de rate-limit).
         log: callable(message, level) avec level dans info/success/warning/error.
-        progress: callable(event, data) optionnel. Événements : "extraction_done",
-            "item_start", "item_done", "complete".
+        progress: callable(event, data) optionnel. Événements : "item_start", "item_done",
+            "extraction_done" (fin du listing, total = éléments listés), "complete".
+            En flux continu, extraction_done arrive APRÈS les traitements et
+            item_start / item_done portent total=None (total inconnu pendant le listing).
         should_stop: callable() -> bool, vérifié pendant l'extraction, entre les
             éléments et pendant les pauses.
         sleep: callable(seconds), injectable pour les tests (défaut time.sleep).
@@ -168,7 +176,9 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         "results": [],
     }
     scan_report = {}
+    extracted = []
     items = []
+    total_ref = [None]  # total d'éléments à traiter ; None tant que le listing n'est pas fini
     critical_error = False
     stats_lock = threading.Lock()
     stop_event = threading.Event()
@@ -226,25 +236,26 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
             main.save_to_history(username, video_id, url=url, item_type=item_type,
                                  file_size=file_size, file_count=file_count, success=success)
 
-    def finish(result, index, total, item_start):
+    def finish(result, index, item_start):
         """Enregistre le résultat et émet l'événement de fin d'élément."""
         result["duration_s"] = time.monotonic() - item_start
         with stats_lock:
             stats["results"].append(result)
             done = len(stats["results"])
             size_mb = stats["size_mb"]
-        notify("item_done", {**result, "total": total, "done": done,
+        notify("item_done", {**result, "total": total_ref[0], "done": done,
                              "total_size_mb": size_mb,
                              "elapsed_s": time.monotonic() - start})
         return result
 
-    def process_item(item, index, total):
+    def process_item(item, index):
         """Traite un élément ; ne lève jamais. Renvoie le dict résultat."""
         video_id = item["id"]
         url = item["url"]
         result = {"index": index, "id": video_id, "url": url, "type": None, "success": False,
                   "files": [], "file_count": 0, "size": 0, "error": None}
-        label = f"[{index + 1}/{total}]"
+        total = total_ref[0]
+        label = f"[{index + 1}/{total}]" if total else f"[{index + 1}]"
         notify("item_start", {"index": index, "total": total, "id": video_id, "url": url})
         item_start = time.monotonic()
 
@@ -264,7 +275,7 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
                  f"réessai au prochain lancement", "error")
             with stats_lock:
                 stats["unknown"] += 1
-            return finish(result, index, total, item_start)
+            return finish(result, index, item_start)
 
         item_type = "slideshow" if flag else "video"
         result["type"] = item_type
@@ -322,9 +333,9 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
             except Exception as e:
                 emit(f"{label} Impossible d'historiser l'échec de {video_id} : {e}", "error")
 
-        return finish(result, index, total, item_start)
+        return finish(result, index, item_start)
 
-    def task(item, index, total):
+    def task(item, index):
         """Tâche complète d'un élément : pause anti-ban (sauf le premier) puis traitement."""
         if stop_requested():
             return None
@@ -332,7 +343,7 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
             return None
         if stop_requested():
             return None
-        return process_item(item, index, total)
+        return process_item(item, index)
 
     try:
         # ---------------------------------------------------------------- historique
@@ -349,72 +360,93 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
             except Exception as e:
                 emit(f"Impossible de lire les échecs historisés : {e}", "warning")
 
-        # ---------------------------------------------------------------- extraction
+        # ---------------------------------------------------------------- listing
+        # workers == 1 : flux continu (chaque élément est traité dès qu'il est listé).
+        # workers > 1 : le listing est collecté en entier, puis traité par le pool.
         emit(f"Analyse du profil @{username}...", "info")
-        extracted = []
+        streaming = workers == 1
+        if streaming:
+            emit("Téléchargement au fil du listing (flux continu)", "info")
+        seen = set()
+        generator = None
         try:
-            scan_report.clear()
-            generator = main.get_video_links(
-                username, history, platform, limit=limit,
-                # Log par défaut : get_video_links affiche déjà ses messages (pas de doublon)
-                callback_log=log if forward_extraction_logs else None,
-                force_update=force_update,
-                cookies_browser=cookies_browser, cookies_file=cookies_file,
-                scan_report=scan_report,
-            )
-            for video in generator or ():
+            try:
+                scan_report.clear()
+                generator = main.get_video_links(
+                    username, history, platform, limit=limit,
+                    # Log par défaut : get_video_links affiche déjà ses messages (pas de doublon)
+                    callback_log=log if forward_extraction_logs else None,
+                    force_update=force_update,
+                    cookies_browser=cookies_browser, cookies_file=cookies_file,
+                    scan_report=scan_report,
+                )
+                iterator = iter(generator or ())
+            except Exception as e:
+                iterator = iter(())
+                stats["extraction_error"] = str(e)
+                emit(f"Erreur d'extraction : {e}", "error")
+
+            while stats["extraction_error"] is None:
+                try:
+                    video = next(iterator)
+                except StopIteration:
+                    break
+                except Exception as e:
+                    stats["extraction_error"] = str(e)
+                    emit(f"Erreur d'extraction : {e}", "error")
+                    break
                 if stop_requested():
                     emit("Arrêt demandé pendant l'extraction", "warning")
                     scan_report["interrupted"] = True  # éléments listés non traités
                     break
                 extracted.append(video)
+                stats["total_extracted"] = len(extracted)
+
+                # Filtrage : déjà dans l'historique (sauf force_update) ou doublon dans ce run
+                video_id = video.get("id")
+                if not video_id or not video.get("url") or video_id in seen \
+                        or (video_id in history and not force_update):
+                    stats["skipped"] += 1
+                else:
+                    seen.add(video_id)
+                    items.append(video)
+                    if streaming and task(video, len(items) - 1) is None and stop_requested():
+                        break
                 if limit and len(extracted) >= limit:
                     break
-        except Exception as e:
-            stats["extraction_error"] = str(e)
-            emit(f"Erreur d'extraction : {e}", "error")
+        finally:
+            # Ferme le générateur (termine gallery-dl) puis sauvegarde les liens listés
+            close = getattr(generator, "close", None)
+            if close:
+                try:
+                    close()
+                except Exception as e:
+                    emit(f"Fermeture du listing : {e}", "warning")
+            if extracted:
+                try:
+                    main.save_links_to_file(username, extracted)
+                except Exception as e:
+                    emit(f"Impossible de sauvegarder les liens : {e}", "warning")
 
         stats["total_extracted"] = len(extracted)
         notify("extraction_done", {"total": len(extracted)})
 
-        if extracted:
-            try:
-                main.save_links_to_file(username, extracted)
-            except Exception as e:
-                emit(f"Impossible de sauvegarder les liens : {e}", "warning")
-
-        # Filtrage : déjà dans l'historique (sauf force_update) ou doublon dans ce run
-        seen = set()
-        for video in extracted:
-            video_id = video.get("id")
-            if not video_id or not video.get("url") or video_id in seen \
-                    or (video_id in history and not force_update):
-                stats["skipped"] += 1
-                continue
-            seen.add(video_id)
-            items.append(video)
-
         if not items:
             if not stop_requested():
                 emit("Aucune nouvelle vidéo à télécharger", "warning")
-        elif not stop_requested():
-            total = len(items)
+        elif not streaming and not stop_requested():
+            total = total_ref[0] = len(items)
             emit(f"Démarrage du téléchargement de {total} élément(s)", "info")
-            if workers == 1:
-                for index, item in enumerate(items):
-                    if task(item, index, total) is None and stop_requested():
-                        break
-            else:
-                emit(f"Mode parallèle : {workers} workers (risque de rate-limit accru)",
-                     "warning")
-                with ThreadPoolExecutor(max_workers=workers) as executor:
-                    futures = [executor.submit(task, item, index, total)
-                               for index, item in enumerate(items)]
-                    for future in futures:
-                        try:
-                            future.result()
-                        except Exception as e:  # filet de sécurité, task ne lève pas
-                            emit(f"Erreur inattendue d'un worker : {e}", "error")
+            emit(f"Mode parallèle : {workers} workers (risque de rate-limit accru)",
+                 "warning")
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [executor.submit(task, item, index)
+                           for index, item in enumerate(items)]
+                for future in futures:
+                    try:
+                        future.result()
+                    except Exception as e:  # filet de sécurité, task ne lève pas
+                        emit(f"Erreur inattendue d'un worker : {e}", "error")
     except Exception as e:
         critical_error = True
         emit(f"Erreur critique : {e}", "error")

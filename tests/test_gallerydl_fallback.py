@@ -333,3 +333,28 @@ def test_orchestrator_no_error_on_empty_profile(env, tmp_path, monkeypatch):
     FakeYDL.mode = "empty"
     stats = orchestrator.run_download(USER, log=lambda *a: None, min_sleep=0, max_sleep=0)
     assert stats["extraction_error"] is None
+
+
+def test_slow_consumer_does_not_trigger_total_timeout(env, monkeypatch):
+    """Le temps du consommateur (téléchargements entre deux entrées) n'est pas compté."""
+    monkeypatch.setattr(main, "GALLERYDL_LIST_TIMEOUT", 0.3)
+    monkeypatch.setattr(main, "GALLERYDL_STALL_TIMEOUT", 0.3)
+    env.stdout = listing("3", "2", "1")
+    gen = main._gallerydl_entries("https://www.tiktok.com/@x", None, 0, None, None)
+    got = []
+    for entry in gen:
+        got.append(entry["id"])
+        time.sleep(0.5)  # consommateur lent : dépasse largement les deux délais cumulés
+    assert got == ["3", "2", "1"]
+    assert not any(t.name == "gallerydl-reader" and t.is_alive() for t in threading.enumerate())
+
+
+def test_slow_consumer_does_not_block_reader_thread(env):
+    """La file est non bornée : le lecteur vide tout le pipe pendant que le consommateur dort."""
+    env.stdout = listing(*[str(i) for i in range(200)])
+    gen = main._gallerydl_entries("https://www.tiktok.com/@x", None, 0, None, None)
+    assert next(gen)["id"] == "0"
+    for reader in [t for t in threading.enumerate() if t.name == "gallerydl-reader"]:
+        reader.join(2)  # le lecteur finit sans que le consommateur n'avance
+        assert not reader.is_alive()
+    assert [e["id"] for e in gen] == [str(i) for i in range(1, 200)]

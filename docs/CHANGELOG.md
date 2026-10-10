@@ -5,6 +5,18 @@ Tous les changements notables de ce projet seront documentés dans ce fichier.
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [1.9.0] - 2026-10-10
+
+### Modifié
+- **Flux continu** : avec `workers=1` (web et CLI), `orchestrator.run_download` télécharge chaque élément dès que le listing le produit au lieu de lister tout le profil avant de commencer. Plus d'attente de plusieurs minutes avant le premier téléchargement sur un gros profil ; un arrêt ou une erreur pendant le listing conserve ce qui est déjà téléchargé. `limit` ferme le générateur (gallery-dl est terminé)
+- `progress` : `extraction_done` est émis à la fin du listing (donc après les traitements en flux continu) ; `item_start` / `item_done` portent `total=None` tant que le listing n'est pas fini
+- `save_links_to_file` est appelé une seule fois en fin de run (aussi en cas d'arrêt ou d'erreur)
+- `workers>1` : comportement inchangé (listing complet, puis pool de threads)
+- Interface web : en-tête de stats et barre de progression gèrent un total inconnu (« N traitées »)
+
+### Corrigé
+- Listing gallery-dl : le délai d'inactivité (300 s) et le plafond total (7200 s) ne comptent plus que le temps d'attente de la sortie de gallery-dl, plus celui des téléchargements entre deux entrées (faux dépassement évité)
+
 ## [1.8.0] - 2026-10-10
 
 ### Corrigé

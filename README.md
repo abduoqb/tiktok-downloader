@@ -142,7 +142,7 @@ Des pauses trop courtes peuvent faire bannir votre IP.
 
 ## Comment ça marche
 
-1. **Listing** : yt-dlp essaie de lister le profil. TikTok le bloque en ce moment ; l'appli bascule alors sur gallery-dl (avec vos cookies). Si les deux échouent, une erreur explicite s'affiche.
+1. **Listing** : yt-dlp essaie de lister le profil. TikTok le bloque en ce moment ; l'appli bascule alors sur gallery-dl (avec vos cookies). Si les deux échouent, une erreur explicite s'affiche. **Les téléchargements démarrent pendant le listing** (flux continu) : chaque vidéo est traitée dès qu'elle est trouvée, sans attendre la fin du profil ; le total n'est connu qu'à la fin du listing (la progression affiche « N traitées »). Si le listing échoue en cours de route, ce qui est déjà téléchargé est conservé. Avec plusieurs workers (`workers>1`), le profil est d'abord listé en entier.
 2. **Classification** : pour chaque lien, détection vidéo ou slideshow. Si le type ne peut pas être déterminé (cookies expirés, 403, réseau), l'élément est signalé en erreur, non marqué dans l'historique, et réessayé au prochain lancement.
 3. **Téléchargement** : vidéo via yt-dlp, slideshow via gallery-dl. L'extraction faite à l'étape 2 est réutilisée (une seule requête par vidéo). yt-dlp choisit d'abord le **H.264 natif de TikTok (540p)** ; contrepartie : 540p au lieu des 720p/1080p HEVC. Le fichier est vérifié avant d'être enregistré dans l'historique.
 4. **Conversion H.264 (repli)** : seulement si TikTok ne propose pas de H.264 et que le HEVC est téléchargé, la vidéo est convertie avec ffmpeg (8 bits, yuv420p). L'original n'est remplacé qu'une fois la nouvelle version valide.

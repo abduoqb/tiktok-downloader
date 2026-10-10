@@ -171,25 +171,30 @@ def emit_stats_header(username, platform, total_videos, already_downloaded, new_
 def emit_progress_bar(current, total, elapsed_seconds, total_size_mb):
     """
     Affiche une barre de progression simple sur une ligne.
-    Format: [##··] 17/170 (10%) | 4m23s | ~39m34s | 17.0 MB | 17 envoyées
+    Format: [##··] 17/170 (10%) | 4m23s | ~39m34s | 17.0 MB
+    Total inconnu (listing en cours, total None/0) : "N traitées" sans barre ni estimation.
     """
+    elapsed_time = f"{int(elapsed_seconds // 60)}m{int(elapsed_seconds % 60):02d}s"
+
+    if not total:
+        emit_log(f"{current} traitées | {elapsed_time} | {total_size_mb:.1f} MB",
+                 "info", "PROGRESS")
+        return
+
     # Calcul de la barre
     bar_length = 20
-    filled = int((current / total) * bar_length) if total > 0 else 0
+    filled = min(bar_length, int((current / total) * bar_length))
     bar = "#" * filled + "·" * (bar_length - filled)
-    percentage = int((current / total) * 100) if total > 0 else 0
+    percentage = int((current / total) * 100)
 
     # Calcul du temps restant
     if current > 0 and elapsed_seconds > 0:
         avg_time_per_video = elapsed_seconds / current
-        remaining_videos = total - current
+        remaining_videos = max(0, total - current)
         remaining_seconds = int(remaining_videos * avg_time_per_video)
         remaining_time = f"~{remaining_seconds // 60}m{remaining_seconds % 60:02d}s"
     else:
         remaining_time = "calcul..."
-
-    # Format du temps écoulé
-    elapsed_time = f"{int(elapsed_seconds // 60)}m{int(elapsed_seconds % 60):02d}s"
 
     # Ligne unique simple
     if current == total:
@@ -697,7 +702,8 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
                     now = time.time()
                     # Barre de progression au plus toutes les 60 s
                     if now - state["last_progress"] >= 60:
-                        emit_progress_bar(state["ok"], data.get("total", state["total"]),
+                        # Total inconnu (None) tant que le listing n'est pas fini
+                        emit_progress_bar(state["ok"], data.get("total") or state["total"] or None,
                                           data.get("elapsed_s", 0), data.get("total_size_mb", 0.0))
                         state["last_progress"] = now
 

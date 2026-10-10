@@ -379,7 +379,9 @@ def _gallerydl_entries(url, limit, history_size, cookies_file, cookies_browser):
     sans attendre la fin de la pagination. La sortie (stderr fusionné) est lue par un thread.
 
     Délais : GALLERYDL_STALL_TIMEOUT (inactivité : aucune ligne de sortie) et
-    GALLERYDL_LIST_TIMEOUT (plafond total). Dépassement -> RuntimeError (le message précise
+    GALLERYDL_LIST_TIMEOUT (plafond total). Les deux ne comptent que le temps passé à
+    attendre la sortie de gallery-dl : le temps du consommateur entre deux entrées
+    (téléchargements en flux continu) est exclu. Dépassement -> RuntimeError (le message précise
     si des entrées avaient déjà été produites) et le processus est tué.
 
     Erreurs : RuntimeError si gallery-dl est absent ou échoue (code != 0) sans rien renvoyer ;
@@ -417,25 +419,34 @@ def _gallerydl_entries(url, limit, history_size, cookies_file, cookies_browser):
 
     seen = set()
     last_noise = ''
-    start = last_activity = time.monotonic()
+    # Seul le temps passé à ATTENDRE la sortie de gallery-dl compte (pas celui du consommateur
+    # qui télécharge entre deux entrées) : un long téléchargement interleavé ne déclenche
+    # donc ni l'inactivité ni le plafond total. La file est non bornée : le thread lecteur
+    # continue de vider le pipe pendant que le consommateur travaille.
+    waited_total = 0.0   # somme des attentes (plafond total)
+    waited_idle = 0.0    # attente depuis la dernière ligne reçue (inactivité)
     try:
         while True:
-            now = time.monotonic()
-            stall_left = GALLERYDL_STALL_TIMEOUT - (now - last_activity)
-            total_left = GALLERYDL_LIST_TIMEOUT - (now - start)
+            stall_left = GALLERYDL_STALL_TIMEOUT - waited_idle
+            total_left = GALLERYDL_LIST_TIMEOUT - waited_total
             if stall_left <= 0:
                 extra = f" ({len(seen)} élément(s) déjà listé(s))" if seen else ""
                 raise RuntimeError(f"gallery-dl ne répond plus depuis {GALLERYDL_STALL_TIMEOUT} s{extra}")
             if total_left <= 0:
                 extra = f" ({len(seen)} élément(s) déjà listé(s))" if seen else ""
                 raise RuntimeError(f"gallery-dl a dépassé le délai total de {GALLERYDL_LIST_TIMEOUT} s{extra}")
+            wait_start = time.monotonic()
             try:
                 raw = lines.get(timeout=max(0.01, min(stall_left, total_left, 0.5)))
             except queue.Empty:
+                waited = time.monotonic() - wait_start
+                waited_total += waited
+                waited_idle += waited
                 continue
+            waited_total += time.monotonic() - wait_start
+            waited_idle = 0.0
             if raw is None:
                 break
-            last_activity = time.monotonic()
             line = raw.strip()
             match = _TIKTOK_ITEM_RE.search(line)
             if not match:

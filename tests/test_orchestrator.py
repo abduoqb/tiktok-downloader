@@ -406,7 +406,131 @@ def test_progress_events(fake):
     events = []
     _run(progress=lambda e, d: events.append((e, d)))
     names = [e for e, _ in events]
-    assert names[0] == "extraction_done" and names[-1] == "complete"
+    # Flux continu : le listing se termine après les traitements
+    assert names[-1] == "complete" and names[-2] == "extraction_done"
     assert names.count("item_start") == 2 and names.count("item_done") == 2
     done = [d for e, d in events if e == "item_done"]
-    assert done[-1]["done"] == 2 and done[-1]["total"] == 2
+    assert done[-1]["done"] == 2
+    assert dict(events)["extraction_done"] == {"total": 2}
+
+
+# ---------------------------------------------------------------- flux continu
+
+class Tracer:
+    """Faux get_video_links qui enregistre l'ordre listing / traitements."""
+
+    def __init__(self, fake, ids, error=None):
+        self.events = []
+        self.closed = False
+        self.finished = False
+        self.ids = ids
+        self.error = error
+        fake.on_download = lambda vid: self.events.append(("download", vid))
+
+    def __call__(self, username, history, platform="tiktok", limit=None, callback_log=None,
+                 force_update=False, cookies_browser=None, cookies_file=None, scan_all=None,
+                 scan_report=None):
+        if scan_report is not None:
+            scan_report["ended_by"] = "error"
+        try:
+            for video_id in self.ids:
+                self.events.append(("list", video_id))
+                yield {"id": video_id, "url": _url(video_id)}
+            if self.error:
+                raise RuntimeError(self.error)
+            if scan_report is not None:
+                scan_report["ended_by"] = "exhausted"
+            self.finished = True
+            self.events.append(("list_end", None))
+        finally:
+            self.closed = True
+
+
+def test_first_download_happens_before_listing_ends(fake, monkeypatch):
+    tracer = Tracer(fake, ["1", "2", "3"])
+    monkeypatch.setattr(orchestrator.main, "get_video_links", tracer)
+    stats = _run()
+    assert tracer.events == [("list", "1"), ("download", "1"), ("list", "2"), ("download", "2"),
+                             ("list", "3"), ("download", "3"), ("list_end", None)]
+    assert stats["videos"] == 3 and stats["total_extracted"] == 3
+
+
+def test_limit_closes_generator(fake, monkeypatch):
+    tracer = Tracer(fake, [str(i) for i in range(10)])
+    monkeypatch.setattr(orchestrator.main, "get_video_links", tracer)
+    stats = _run(limit=2)
+    assert stats["videos"] == 2 and stats["total_extracted"] == 2
+    assert tracer.closed and not tracer.finished
+    assert [e for e in tracer.events if e[0] == "list"] == [("list", "0"), ("list", "1")]
+
+
+def test_listing_error_midway_keeps_downloaded(fake, monkeypatch):
+    tracer = Tracer(fake, ["1", "2"], error="listing coupé")
+    monkeypatch.setattr(orchestrator.main, "get_video_links", tracer)
+    logs = []
+    stats = _run(log=lambda m, level="info": logs.append((level, m)))
+    assert stats["videos"] == 2 and stats["extraction_error"] == "listing coupé"
+    assert any(level == "error" and "listing coupé" in m for level, m in logs)
+    assert _history()["1"]["success"] is True and _history()["2"]["success"] is True
+    assert stats["scan_complete"] is False and stats["full_scan"] is False
+    assert main.load_scan_state(USERNAME)["fully_scanned"] is False
+    with open(os.path.join(fake.user_dir, f"{USERNAME}_videos.txt"), encoding="utf-8") as fh:
+        assert sorted(fh.read().split()) == [_url("1"), _url("2")]
+
+
+def test_stop_midway_closes_generator_and_saves_links(fake, monkeypatch):
+    tracer = Tracer(fake, ["1", "2", "3", "4"])
+    monkeypatch.setattr(orchestrator.main, "get_video_links", tracer)
+    saved = []
+    real_save = orchestrator.main.save_links_to_file
+    monkeypatch.setattr(orchestrator.main, "save_links_to_file",
+                        lambda u, v: (saved.append(list(v)), real_save(u, v)))
+    stats = _run(should_stop=lambda: sum(1 for e in tracer.events if e[0] == "download") >= 1)
+    assert stats["stopped"] is True and stats["videos"] == 1
+    assert tracer.closed and not tracer.finished
+    assert len(saved) == 1 and [v["id"] for v in saved[0]] == ["1"]
+    assert main.load_scan_state(USERNAME)["fully_scanned"] is False
+
+
+def test_unknown_type_in_stream_not_historized(fake, monkeypatch):
+    tracer = Tracer(fake, ["1", "2"])
+    fake.types["1"] = None
+    monkeypatch.setattr(orchestrator.main, "get_video_links", tracer)
+    stats = _run()
+    assert stats["unknown"] == 1 and stats["videos"] == 1
+    assert "1" not in _history() and _history()["2"]["success"] is True
+    assert stats["scan_complete"] is False
+
+
+def test_complete_stream_marks_fully_scanned_and_saves_links_once(fake, monkeypatch):
+    tracer = Tracer(fake, ["1", "2"])
+    monkeypatch.setattr(orchestrator.main, "get_video_links", tracer)
+    saved = []
+    monkeypatch.setattr(orchestrator.main, "save_links_to_file", lambda u, v: saved.append(list(v)))
+    stats = _run()
+    assert stats["full_scan"] is True and stats["scan_complete"] is True
+    assert main.load_scan_state(USERNAME)["fully_scanned"] is True
+    assert len(saved) == 1 and [v["id"] for v in saved[0]] == ["1", "2"]
+
+
+def test_progress_total_unknown_while_listing_then_known(fake, monkeypatch):
+    tracer = Tracer(fake, ["1", "2"])
+    monkeypatch.setattr(orchestrator.main, "get_video_links", tracer)
+    events = []
+    _run(progress=lambda e, d: events.append((e, d)))
+    assert [d["total"] for e, d in events if e in ("item_start", "item_done")] == [None] * 4
+    assert ("extraction_done", {"total": 2}) in events
+    complete = events[-1][1]
+    assert events[-1][0] == "complete" and complete["total_extracted"] == 2
+
+
+def test_parallel_mode_collects_listing_first(fake, monkeypatch):
+    tracer = Tracer(fake, ["1", "2", "3"])
+    monkeypatch.setattr(orchestrator.main, "get_video_links", tracer)
+    events = []
+    stats = _run(workers=2, progress=lambda e, d: events.append((e, d)))
+    names = [e for e, _ in events]
+    assert names[0] == "extraction_done" and names[-1] == "complete"
+    assert tracer.events[:4] == [("list", "1"), ("list", "2"), ("list", "3"), ("list_end", None)]
+    assert all(d["total"] == 3 for e, d in events if e in ("item_start", "item_done"))
+    assert stats["videos"] == 3

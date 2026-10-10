@@ -110,8 +110,8 @@ Actuellement, les logs SSE montrent la progression mais pas de barre visuelle.
 
 ---
 
-### Télécharger au fil du listing (flux continu) plutôt qu'en deux temps
-**Priorité**: Moyenne (tâche reportée)
+### ✅ Télécharger au fil du listing (flux continu) plutôt qu'en deux temps
+**Statut**: RÉALISÉ (v1.9.0)
 **Décision**: flux continu retenu (pas de lots de 10).
 
 Aujourd'hui l'appli liste tout le profil puis télécharge. Sur un gros profil :
@@ -125,7 +125,9 @@ fichiers, pas des posts). L'arrêt incrémental (10 vidéos connues) et `limit`
 fonctionnent naturellement en flux (l'arrêt incrémental n'est actif qu'après un premier
 scan complet réussi, voir `scan_state.json`).
 
-**À prévoir**: plus de total connu à l'avance (progression « i traitées » au
+**Réalisé**: `orchestrator.run_download` (workers=1, web et CLI) traite chaque élément dès qu'il est listé ; le plafond total gallery-dl ne compte plus le temps du consommateur ; une erreur de listing en cours de route conserve ce qui est téléchargé. Le mode `workers>1` garde le fonctionnement par lots (listing complet puis pool), sans file producteur/consommateur.
+
+**Était à prévoir**: plus de total connu à l'avance (progression « i traitées » au
 lieu de « i/n »), arrêt propre si le listing échoue en cours de route, et
 adapter le mode `workers>1` (file d'attente producteur/consommateur).
 
