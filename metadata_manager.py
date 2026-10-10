@@ -78,7 +78,8 @@ class OptimizedMetadataManager:
         """Met en cache le résultat d'un appel is_slideshow()"""
         self._slideshow_cache[video_url] = is_slideshow
 
-    def add(self, video_id, url, item_type, file_size=0, file_count=1, success=True, tags=None, favorite=False, notes=""):
+    def add(self, video_id, url, item_type, file_size=0, file_count=1, success=True, tags=None, favorite=False, notes="",
+            preserve_user_fields=False):
         """
         Ajoute un téléchargement avec métadonnées
 
@@ -92,8 +93,20 @@ class OptimizedMetadataManager:
             tags: Liste de tags (optionnel)
             favorite: Marquer comme favori (optionnel)
             notes: Notes personnelles (optionnel)
+            preserve_user_fields: True = conserve les tags / favori / notes d'une entrée
+                existante quand ils ne sont pas fournis (tags None, favorite False, notes "").
+                False (défaut) = l'entrée est entièrement remplacée.
         """
         self.load()
+
+        old = self._metadata.get(video_id) if preserve_user_fields else None
+        if isinstance(old, dict):
+            if tags is None:
+                tags = old.get("tags") or []
+            if not favorite:
+                favorite = bool(old.get("favorite", False))
+            if not notes:
+                notes = old.get("notes") or ""
 
         self._metadata[video_id] = {
             "url": url,

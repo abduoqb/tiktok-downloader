@@ -75,6 +75,14 @@ def _history():
         return json.load(fh)
 
 
+def _link_state():
+    path = os.path.join("downloads", USER, "link_state.json")
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)["items"]
+
+
 def _run(items, **kw):
     sleeps = kw.pop("sleeps", [])
     kw.setdefault("log", lambda m, l="info": None)
@@ -103,16 +111,27 @@ def test_history_items_skipped(fake):
     assert stats["skipped"] == 1 and stats["videos"] == 2
 
 
-def test_failed_in_history_skipped_unless_force_update(fake):
+def test_failed_in_history_retried_once_then_waits_unless_force_update(fake):
+    # Échec hérité : retenté une fois par le tri, puis suit le modèle link_state.json
     main.save_to_history(USER, "2", url=_item(2)["url"], item_type="video", success=False)
-    _run([_item(1), _item(2)])
-    assert [c[1] for c in fake.calls if c[0] == "video"] == ["1"]
+    fake.fail.add("2")
+    stats = _run([_item(1), _item(2)])
+    assert [c[1] for c in fake.calls if c[0] == "video"] == ["1", "2"]
+    assert stats["retried"] == 1 and _link_state()["2"]["status"] == "retry"
+
     fake.calls.clear()
+    stats = _run([_item(1), _item(2)])          # réessai non échu, 1 déjà téléchargé
+    assert [c for c in fake.calls if c[0] == "video"] == []
+    assert stats["skipped"] == 2 and stats["known"] == 1 and stats["retry_waiting"] == 1
+
+    fake.calls.clear()
+    fake.fail.discard("2")
     stats = _run([_item(1), _item(2)], force_update=True)
-    # l'échec est retenté, le succès (1) reste sauté
+    # le réessai est forcé, le succès (1) reste sauté
     assert [c[1] for c in fake.calls if c[0] == "video"] == ["2"]
     assert stats["videos"] == 1
     assert _history()["2"].get("success", True) is not False
+    assert "2" not in _link_state()             # le succès efface l'état
 
 
 def test_duplicates_and_invalid_entries_skipped(fake):
@@ -139,7 +158,9 @@ def test_failure_is_historized_and_counted(fake):
     fake.fail.add("2")
     stats = _run([_item(1), _item(2), _item(3)])
     assert stats["failed"] == 1 and stats["videos"] == 2 and stats["processed"] == 3
-    assert _history()["2"]["success"] is False
+    # Échec enregistré dans link_state.json (plus dans metadata.json)
+    assert "2" not in _history()
+    assert _link_state()["2"]["status"] == "retry" and _link_state()["2"]["attempts"] == 1
 
 
 def test_should_stop_halts_run(fake):

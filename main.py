@@ -85,12 +85,55 @@ def load_history(username):
     manager = get_metadata_manager(username)
     return manager.get_all_ids()
 
-def save_to_history(username, video_id, url="", item_type="video", file_size=0, file_count=1, success=True):
+def save_to_history(username, video_id, url="", item_type="video", file_size=0, file_count=1, success=True,
+                    preserve_user_fields=False):
     """
     Saves a video ID to history with metadata using OptimizedMetadataManager
+
+    preserve_user_fields=True : conserve les tags / favori / notes d'une entrée existante.
     """
     manager = get_metadata_manager(username)
-    manager.add(video_id, url, item_type, file_size, file_count, success)
+    manager.add(video_id, url, item_type, file_size, file_count, success,
+                preserve_user_fields=preserve_user_fields)
+
+
+def load_history_split(username):
+    """(ids réussis, ids en échec hérités success=False) de metadata.json, en LECTURE SEULE.
+
+    Contrairement à load_history, ne crée jamais le dossier du profil : dossier absent =>
+    deux ensembles vides. Une entrée sans clé 'success' compte comme réussie.
+    """
+    user_dir = get_user_dir(username)
+    if not os.path.isdir(user_dir):
+        return set(), set()
+    data = OptimizedMetadataManager(username, user_dir).load() or {}
+    success, failed = set(), set()
+    for vid_id, entry in data.items():
+        ok = entry.get('success', True) if isinstance(entry, dict) else True
+        (success if ok is not False else failed).add(str(vid_id))
+    return success, failed
+
+
+# ---------------------------------------------------------------- dernière erreur (par thread)
+# Les fonctions de téléchargement / sonde gardent leurs valeurs de retour (bool / None) :
+# le message de la dernière erreur est exposé à part, par thread (workers parallèles).
+_last_error_state = threading.local()
+_LAST_ERROR_MAX = 500
+
+
+def reset_last_error():
+    """Efface la dernière erreur mémorisée pour le thread courant."""
+    _last_error_state.message = None
+
+
+def last_error():
+    """Message de la dernière erreur de téléchargement / sonde du thread courant, ou None."""
+    return getattr(_last_error_state, 'message', None)
+
+
+def _set_last_error(message):
+    text = str(message or '').strip()
+    _last_error_state.message = text[-_LAST_ERROR_MAX:] if text else None
 
 # Cache mémoire des extractions : url -> (timestamp monotonic, info_dict).
 # Alimenté par is_slideshow, consommé (pop) par download_video : 1 requête par vidéo.
@@ -137,7 +180,9 @@ def is_slideshow(video_url, username=None, use_cache=True, cookies_browser=None,
                      expired cookies, 403, invalid JSON, network...).
                      None is NEVER cached: callers must treat it as an error
                      and retry later (do not download it as a normal video).
+                     The error message is then available via last_error().
     """
+    reset_last_error()
     # Try cache first if username provided
     if use_cache and username:
         manager = get_metadata_manager(username)
@@ -155,6 +200,7 @@ def is_slideshow(video_url, username=None, use_cache=True, cookies_browser=None,
             if not info:
                 # yt-dlp a renvoyé None : type inconnu (pas une vidéo normale)
                 print(f"Error checking slideshow: no info returned for {video_url}")
+                _set_last_error(f"no info returned for {video_url}")
                 return None
 
             # Check if there's video format available
@@ -162,6 +208,7 @@ def is_slideshow(video_url, username=None, use_cache=True, cookies_browser=None,
             if not formats:
                 # Aucun format : impossible de conclure
                 print(f"Error checking slideshow: no formats returned for {video_url}")
+                _set_last_error(f"no formats returned for {video_url}")
                 return None
 
             has_video = any(f.get('vcodec') != 'none' for f in formats)
@@ -182,6 +229,7 @@ def is_slideshow(video_url, username=None, use_cache=True, cookies_browser=None,
     except Exception as e:
         # Type inconnu : ne PAS mettre en cache, l'appelant réessaiera plus tard
         print(f"Error checking slideshow (type unknown, will retry later): {e}")
+        _set_last_error(str(e) or type(e).__name__)
         return None
 
 def download_slideshow(video_url, username, video_id, cookies_browser=None, cookies_file=None):
@@ -190,7 +238,11 @@ def download_slideshow(video_url, username, video_id, cookies_browser=None, cook
     Args:
         cookies_browser: Browser to extract cookies from
         cookies_file: Path to cookies.txt file
+
+    En cas d'échec, le message d'erreur (stderr de gallery-dl, exception) est disponible via
+    last_error().
     """
+    reset_last_error()
     try:
         # Get upload date from TikTok
         ydl_opts = build_ydl_opts('probe', cookies_file, cookies_browser)
@@ -246,6 +298,8 @@ def download_slideshow(video_url, username, video_id, cookies_browser=None, cook
                 print(f"gallery-dl error (returncode {result.returncode})")
                 if result.stderr:
                     print(f"Error: {result.stderr}")
+                _set_last_error(_tail_lines(result.stderr)
+                                or f"gallery-dl a échoué (code {result.returncode})")
                 return False
 
             # Find downloaded files in temp directory
@@ -255,6 +309,8 @@ def download_slideshow(video_url, username, video_id, cookies_browser=None, cook
 
             if not image_files:
                 print("No images found after gallery-dl download")
+                _set_last_error(_tail_lines(result.stderr)
+                                or "No images found after gallery-dl download")
                 return False
 
             # Delete audio files (we don't need them)
@@ -288,6 +344,7 @@ def download_slideshow(video_url, username, video_id, cookies_browser=None, cook
 
             if moved_count == 0:
                 print("No images could be moved to the destination folder")
+                _set_last_error("No images could be moved to the destination folder")
                 return False
 
             print(f"Slideshow downloaded: {moved_count} images saved to {output_dir}")
@@ -308,12 +365,20 @@ def download_slideshow(video_url, username, video_id, cookies_browser=None, cook
     except FileNotFoundError:
         print("ERROR: gallery-dl is not installed!")
         print("Install with: pip install gallery-dl")
+        _set_last_error("gallery-dl is not installed")
         return False
     except Exception as e:
         print(f"Error downloading slideshow: {e}")
         import traceback
         traceback.print_exc()
+        _set_last_error(str(e) or type(e).__name__)
         return False
+
+
+def _tail_lines(text, max_lines=3):
+    """Dernières lignes non vides d'une sortie (stderr), jointes par ' | '."""
+    lines = [line.strip() for line in str(text or '').splitlines() if line.strip()]
+    return ' | '.join(lines[-max_lines:])
 
 class _YtdlpErrorCapture:
     """Logger yt-dlp minimal : mémorise les erreurs (ignoreerrors=True les rend silencieuses)."""
@@ -332,6 +397,43 @@ class _YtdlpErrorCapture:
 
     def error(self, msg):
         self.errors.append(str(msg))
+
+
+def _console_print(line, end="\n"):
+    try:
+        print(line, end=end, flush=True)
+    except UnicodeEncodeError:  # console cp1252 (Windows)
+        print(line.encode('ascii', 'replace').decode('ascii'), end=end, flush=True)
+    except Exception:
+        pass
+
+
+class _YtdlpConsoleLogger(_YtdlpErrorCapture):
+    """Logger yt-dlp du téléchargement : mémorise les erreurs ET garde l'affichage console.
+
+    Avec un logger, yt-dlp n'écrit plus rien lui-même : les messages d'écran passent par
+    debug() (progression comprise), les avertissements par warning(), les erreurs par error().
+    """
+
+    def debug(self, msg):
+        msg = str(msg)
+        if msg.startswith('[debug] '):
+            return
+        # Lignes de progression : réécrites sur la même ligne (sauf la dernière)
+        if msg.startswith('[download]') and '%' in msg and ('ETA' in msg or ' at ' in msg):
+            _console_print(msg, end="\n" if '100%' in msg else "\r")
+            return
+        _console_print(msg)
+
+    def info(self, msg):
+        _console_print(str(msg))
+
+    def warning(self, msg):
+        _console_print(f"WARNING: {msg}")
+
+    def error(self, msg):
+        super().error(msg)
+        _console_print(str(msg))
 
 
 GALLERYDL_STALL_TIMEOUT = 300    # s sans aucune ligne de sortie avant d'abandonner
@@ -477,9 +579,12 @@ def _gallerydl_entries(url, limit, history_size, cookies_file, cookies_browser):
         thread.join(timeout=5)
 
 
-def _filter_entries(entries, history, limit, force_update, log, scan_all=False, scan_report=None):
+def _filter_entries(entries, history, limit, force_update, log, scan_all=False, scan_report=None,
+                    known_ids=None):
     """Logique aval commune : historique, arrêt incrémental, limite. Générateur de {'url','id'}.
 
+    known_ids (optionnel) : ensemble des ids considérés comme « connus » (sautés et comptés
+    dans les 10 consécutifs) ; None = `history` (comportement historique).
     L'arrêt après 10 doublons consécutifs n'est appliqué que si NOT (force_update OR scan_all).
     scan_report (dict, optionnel) : 'listed' (entrées vues) et 'ended_by'
     ('exhausted' | 'incremental' | 'limit'). 'limit' est posé AVANT le dernier yield, car le
@@ -488,13 +593,14 @@ def _filter_entries(entries, history, limit, force_update, log, scan_all=False, 
     new_videos_count = 0
     consecutive_matches = 0
     allow_incremental = not (force_update or scan_all)
+    known = history if known_ids is None else known_ids
     for entry in entries:
         video_id = entry.get('id')
         if scan_report is not None:
             scan_report['listed'] = scan_report.get('listed', 0) + 1
 
         # INCREMENTAL CHECK (Smart Mode)
-        if video_id in history:
+        if video_id in known:
             consecutive_matches += 1
             if consecutive_matches >= 10 and allow_incremental:
                 log(f"Found {consecutive_matches} consecutive existing videos. Stopping extraction (Smart Incremental Mode).", "warning")
@@ -541,7 +647,7 @@ def _explain_ytdlp_error(error_msg, log):
         log(f"Error extracting links: {error_msg}", "error")
 
 
-def get_video_links(username, history, platform="tiktok", limit=None, callback_log=None, force_update=False, cookies_browser=None, cookies_file=None, scan_all=None, scan_report=None):
+def get_video_links(username, history, platform="tiktok", limit=None, callback_log=None, force_update=False, cookies_browser=None, cookies_file=None, scan_all=None, scan_report=None, known_ids=None):
     """
     Extracts video links for a given username using yt-dlp (repli gallery-dl pour TikTok).
     Stops if a video ID is already in history (Incremental Mode), unless force_update is True.
@@ -560,7 +666,11 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
         scan_report: dict rempli par la fonction : 'ended_by' ('exhausted' | 'incremental' |
             'limit' | 'error') et 'listed' (entrées vues). Cette fonction ne modifie jamais
             l'état de scan.
+        known_ids: ensemble optionnel des ids « connus » (sautés et comptés pour l'arrêt
+            incrémental) ; None = history. history reste utilisé pour la plage gallery-dl.
     """
+    if known_ids is not None:
+        known_ids = {str(i) for i in known_ids}
     if scan_report is None:
         scan_report = {}
     scan_report['listed'] = 0
@@ -611,7 +721,8 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
     try:
         found = yield from _filter_entries(tracked(_ytdlp_entries(url, ydl_opts, log, username)),
                                            history, limit, force_update, log,
-                                           scan_all=scan_all, scan_report=scan_report)
+                                           scan_all=scan_all, scan_report=scan_report,
+                                           known_ids=known_ids)
         if raw_count[0] == 0 and capture.errors:
             ytdlp_error = capture.errors[-1]
         else:
@@ -641,13 +752,15 @@ def get_video_links(username, history, platform="tiktok", limit=None, callback_l
     scan_report['ended_by'] = 'error'
 
     def gdl_tracked():
-        for entry in _gallerydl_entries(url, limit, len(history), cookies_file, cookies_browser):
+        skipped_size = len(history) if known_ids is None else max(len(history), len(known_ids))
+        for entry in _gallerydl_entries(url, limit, skipped_size, cookies_file, cookies_browser):
             gdl_count[0] += 1
             yield entry
 
     try:
         found = yield from _filter_entries(gdl_tracked(), history, limit, force_update, log,
-                                           scan_all=scan_all, scan_report=scan_report)
+                                           scan_all=scan_all, scan_report=scan_report,
+                                           known_ids=known_ids)
     except RuntimeError as e:
         scan_report['ended_by'] = "error"
         if gdl_count[0] == 0:
@@ -876,13 +989,27 @@ def download_video(video_url, username, video_id, retries=3, cookies_browser=Non
     Args:
         cookies_browser: Browser to extract cookies from
         cookies_file: Path to cookies.txt file
+
+    En cas d'échec, last_error() donne la dernière erreur remontée par yt-dlp (via un logger
+    léger, ignoreerrors=True rendant les erreurs silencieuses) ou, à défaut, la dernière
+    exception.
     """
+    reset_last_error()
     output_dir = get_user_dir(username)
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
+    capture = _YtdlpConsoleLogger()
     ydl_opts = build_ydl_opts('download', cookies_file, cookies_browser,
-                              outtmpl=f'{output_dir}/%(upload_date)s_%(id)s.%(ext)s')
+                              outtmpl=f'{output_dir}/%(upload_date)s_%(id)s.%(ext)s',
+                              logger=capture)
+    last_exception = [None]
+
+    def fail(message):
+        # Priorité à l'erreur yt-dlp (la plus précise), sinon l'exception / le message
+        _set_last_error(capture.errors[-1] if capture.errors else message)
+        return False
+
 
     # Extraction déjà faite par is_slideshow : première tentative seulement, sans requête de plus
     cached_info = _info_cache_pop(video_url)
@@ -938,6 +1065,7 @@ def download_video(video_url, username, video_id, retries=3, cookies_browser=Non
             downloaded = True
             break
         except Exception as e:
+            last_exception[0] = str(e) or type(e).__name__
             print(f"Error downloading {video_url} (Attempt {attempt+1}/{retries}): {e}")
             if attempt < retries - 1:
                 time.sleep(2) # Wait a bit before retrying
@@ -945,7 +1073,7 @@ def download_video(video_url, username, video_id, retries=3, cookies_browser=Non
                 print("Max retries reached.")
 
     if not downloaded:
-        return False
+        return fail(last_exception[0] or "download failed")
 
     # Post-process (once, after a successful download): ensure H.264 for browser compatibility
     for video_file in find_downloaded_videos(username, video_id):
@@ -964,6 +1092,7 @@ def download_video(video_url, username, video_id, retries=3, cookies_browser=Non
     # Final check (the file must still be there after post-processing)
     if not find_downloaded_videos(username, video_id):
         print(f"Error: video file for {video_id} missing after post-processing")
+        _set_last_error(f"video file for {video_id} missing after post-processing")
         return False
 
     return True

@@ -16,13 +16,28 @@ téléchargement, vérification, historique, arrêt, progression). Le total est 
 scan_state.json n'est jamais modifié : un import ne marque ni ne démarque le profil comme
 entièrement scanné.
 
+Tri des liens (triage.py) : chargé UNE fois par dossier (historique metadata.json en lecture
+seule, fichiers du disque via disk_index, états link_state.json via LinkState), sans créer le
+dossier. Chaque élément est classé : downloaded (succès historisé, jamais retéléchargé, même
+avec force_update), adopt (fichier présent sur le disque mais absent de l'historique : ajouté
+à l'historique SANS retéléchargement), ignored (supprimé par l'utilisateur : jamais
+retéléchargé, même avec force_update), unavailable / retry_waiting (sautés ; force_update les
+fait repasser en retry_due), retry_due et new (traités).
+
 Règles métier :
-    - is_slideshow renvoie True / False / None. None = type inconnu : erreur loggée,
-      compté dans `unknown`, jamais téléchargé comme vidéo, NON écrit dans
-      l'historique (réessayé au prochain lancement).
+    - is_slideshow renvoie True / False / None. None = type inconnu. Si l'erreur de sonde
+      (main.last_error()) est définitive (vidéo supprimée / privée...), l'élément devient
+      « indisponible » (compté dans `failed`) ; sinon : erreur loggée, compté dans
+      `unknown`, jamais téléchargé comme vidéo, NON écrit dans l'historique, une tentative
+      temporaire est enregistrée dans link_state.json.
     - Succès vidéo uniquement si main.find_downloaded_videos trouve un fichier non vide ;
-      la taille enregistrée vient de ce fichier.
-    - Tout échec est historisé avec success=False.
+      la taille enregistrée vient de ce fichier. Un succès efface l'état retry/unavailable.
+    - Un échec n'est PLUS écrit dans metadata.json : il est classé (download_errors) puis
+      enregistré dans link_state.json (temporaire => réessai après 10 min / 1 h / 6 h, au plus
+      link_state.MAX_ATTEMPTS tentatives ; définitif ou tentatives épuisées => indisponible).
+      Un échec hérité (success=False dans metadata.json, sans état) est retenté une fois.
+    - link_state.json est sauvegardé tous les 10 éléments traités et en fin de run (aussi en
+      cas d'arrêt ou d'exception).
     - Une exception sur un élément ne tue jamais le run.
 
 Anti-ban : pause random.uniform(min_sleep, max_sleep) avant chaque élément sauf le
@@ -46,8 +61,30 @@ import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
+import disk_index
+import download_errors
+import link_state
 import main
+import triage
+
+# Sauvegarde de link_state.json tous les N éléments traités (et toujours en fin de run)
+STATE_SAVE_EVERY = 10
+
+# Catégories du tri considérées comme « connues » pour l'arrêt incrémental du listing
+_KNOWN_CATEGORIES = ("downloaded", "adopt", "ignored", "unavailable", "retry_waiting")
+
+# Catégorie du tri -> sous-compteur de stats (tous inclus dans stats["skipped"])
+_SKIP_COUNTERS = {
+    "downloaded": "known",
+    "adopt": "adopted",
+    "ignored": "ignored",
+    "unavailable": "unavailable",
+    "retry_waiting": "retry_waiting",
+    "duplicate": "duplicate",
+    "invalid": "invalid",
+}
 
 
 # Sérialise les accès à metadata.json. main.get_metadata_manager crée un nouveau
@@ -84,6 +121,30 @@ def _normalize_sleep(min_sleep, max_sleep):
 
     low, high = conv(min_sleep), conv(max_sleep)
     return (high, low) if low > high else (low, high)
+
+
+def _item_key(raw_id):
+    """Identifiant normalisé (comme triage.classify_links) ; '' si absent."""
+    return str(raw_id).strip() if raw_id is not None else ""
+
+
+def _adoption_url(username, item_id, kind):
+    """URL reconstruite d'un élément adopté depuis le disque."""
+    path = "photo" if kind == "slideshow" else "video"
+    return f"https://www.tiktok.com/@{username}/{path}/{item_id}"
+
+
+def _retry_text(entry):
+    """Courte description d'un état link_state pour les logs."""
+    if not entry:
+        return ""
+    if entry.get("status") == "retry":
+        due = entry.get("next_retry") or "?"
+        return f"nouvel essai après {due} (tentative {entry.get('attempts')}/" \
+               f"{link_state.MAX_ATTEMPTS})"
+    if entry.get("status") == "unavailable":
+        return "marquée indisponible"
+    return entry.get("status") or ""
 
 
 def _update_scan_state(username, stats, scan_report, items, critical_error, emit):
@@ -132,12 +193,9 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         min_sleep, max_sleep: Bornes (secondes) de la pause anti-ban avant chaque élément
             sauf le premier.
         limit: Nombre maximal de nouveaux éléments traités (None = pas de limite).
-        force_update: Désactive l'arrêt incrémental de l'extraction ET réessaie les
-            éléments historisés avec success=False (retirés de l'historique transmis à
-            main.get_video_links et du filtre de saut). Sans force_update, les échecs
-            historisés restent ignorés comme les succès.
-            En mode import (items), les succès historisés restent TOUJOURS sautés ; seuls les
-            échecs sont retentés avec force_update.
+        force_update: Désactive l'arrêt incrémental de l'extraction ET réessaie tout de
+            suite les éléments indisponibles ou en attente de réessai (retry_due). Les succès
+            historisés et les éléments ignorés restent TOUJOURS sautés (scan et import).
         cookies_file, cookies_browser: Transmis à toutes les fonctions de main.
         workers: 1 = séquentiel sans thread, en flux continu (téléchargement pendant le
             listing) ; >1 = listing complet d'abord, puis pool de threads (augmente le
@@ -164,7 +222,12 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         processed (downloaded+failed), total_extracted, size_mb,
         duration_s, stopped, extraction_error (str | None), full_scan (le run a parcouru
         tout le profil sans arrêt incrémental), scan_complete (état fully_scanned après le run),
-        results (liste de dicts par élément traité).
+        results (liste de dicts par élément traité, avec sa catégorie de tri "category" :
+        "new" ou "retry_due").
+        Sous-compteurs du tri : skipped = known (déjà téléchargés) + adopted (adoptés depuis
+        le disque) + ignored + unavailable + retry_waiting + duplicate + invalid.
+        retried = éléments traités qui étaient à retenter ; marked_unavailable = éléments
+        devenus indisponibles pendant ce run.
     """
     log_fn = log or _default_log
     should_stop_fn = should_stop or (lambda: False)
@@ -189,16 +252,33 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         "extraction_error": None,
         "full_scan": False,
         "scan_complete": False,
+        # Sous-compteurs du tri (leur somme = skipped)
+        "known": 0,
+        "adopted": 0,
+        "ignored": 0,
+        "unavailable": 0,
+        "retry_waiting": 0,
+        "duplicate": 0,
+        "invalid": 0,
+        # Éléments traités qui étaient à retenter / devenus indisponibles pendant ce run
+        "retried": 0,
+        "marked_unavailable": 0,
         "results": [],
     }
     scan_report = {}
     extracted = []
     import_items = items if import_mode else None
-    items = []  # éléments à traiter (après filtrage historique / doublons)
+    items = []  # éléments à traiter (après tri)
+    categories = {}  # id -> catégorie du tri ('new' | 'retry_due') des éléments à traiter
     total_ref = [None]  # total d'éléments à traiter ; None tant que le listing n'est pas fini
     critical_error = False
     stats_lock = threading.Lock()
     stop_event = threading.Event()
+    # Tri : chargé une fois (dans le try principal) ; lstate None tant que non chargé
+    tri = {"ctx": None, "lstate": None, "now": None, "adopted_ids": set()}
+    # Compteur d'éléments traités depuis la dernière sauvegarde de link_state.json
+    state_lock = threading.Lock()
+    state_counter = [0]
 
     def emit(message, level="info"):
         """Log protégé : une erreur du callback ne doit pas interrompre le run."""
@@ -252,10 +332,72 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
             notify("pause_end", {})
 
     def record_history(video_id, url, item_type, file_size=0, file_count=1, success=True):
-        """Appel sérialisé de main.save_to_history."""
+        """Appel sérialisé de main.save_to_history (tags / favori / notes conservés)."""
         with _metadata_lock:
             main.save_to_history(username, video_id, url=url, item_type=item_type,
-                                 file_size=file_size, file_count=file_count, success=success)
+                                 file_size=file_size, file_count=file_count, success=success,
+                                 preserve_user_fields=True)
+
+    def save_state():
+        """Sauvegarde atomique de link_state.json (sans effet si rien n'a changé)."""
+        lstate = tri["lstate"]
+        if lstate is None:
+            return
+        try:
+            with state_lock:
+                lstate.save()
+        except Exception as e:
+            emit(f"Impossible de sauvegarder link_state.json : {e}", "warning")
+
+    def state_tick():
+        """Un élément traité de plus : sauvegarde périodique de link_state.json."""
+        with state_lock:
+            state_counter[0] += 1
+            due = state_counter[0] >= STATE_SAVE_EVERY
+            if due:
+                state_counter[0] = 0
+        if due:
+            save_state()
+
+    def count_skip(category):
+        """Élément non traité : sous-compteur de sa catégorie + total skipped."""
+        with stats_lock:
+            stats["skipped"] += 1
+            stats[_SKIP_COUNTERS[category]] += 1
+
+    def adopt(video_id, url, entry):
+        """Fichier présent sur le disque mais absent de l'historique : historisé sans
+        retéléchargement, état retry/unavailable effacé. Renvoie True si adopté."""
+        key = _item_key(video_id)
+        kind = entry.kind if entry is not None and entry.kind in ("video", "slideshow") \
+            else "video"
+        size = int(getattr(entry, "size", 0) or 0)
+        file_count = (int(getattr(entry, "image_count", 0) or 0) or 1) \
+            if kind == "slideshow" else 1
+        try:
+            record_history(key, url or _adoption_url(username, key, kind), kind,
+                           file_size=size, file_count=file_count, success=True)
+        except Exception as e:
+            emit(f"Adoption impossible de {key} : {e}", "warning")
+            return False
+        tri["lstate"].clear(key)
+        tri["ctx"].history_success.add(key)
+        tri["adopted_ids"].add(key)
+        count_skip("adopt")
+        return True
+
+    def record_failure(video_id, detail):
+        """Échec d'un élément : classement de l'erreur puis état dans link_state.json.
+        Renvoie (reason, statut, entrée d'état)."""
+        kind, reason = download_errors.classify_error(detail)
+        lstate = tri["lstate"]
+        status = lstate.record_failure(video_id, kind, detail)
+        if status == "unavailable" and kind == "permanent":
+            lstate.mark_unavailable(video_id, reason, detail)  # raison lisible
+        if status == "unavailable":
+            with stats_lock:
+                stats["marked_unavailable"] += 1
+        return reason, status, lstate.get(video_id)
 
     def finish(result, index, item_start):
         """Enregistre le résultat et émet l'événement de fin d'élément."""
@@ -264,6 +406,7 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
             stats["results"].append(result)
             done = len(stats["results"])
             size_mb = stats["size_mb"]
+        state_tick()
         notify("item_done", {**result, "total": total_ref[0], "done": done,
                              "total_size_mb": size_mb,
                              "elapsed_s": time.monotonic() - start})
@@ -273,28 +416,65 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         """Traite un élément ; ne lève jamais. Renvoie le dict résultat."""
         video_id = item["id"]
         url = item["url"]
+        key = _item_key(video_id)
+        category = categories.get(key, "new")
         result = {"index": index, "id": video_id, "url": url, "type": None, "success": False,
-                  "files": [], "file_count": 0, "size": 0, "error": None}
+                  "files": [], "file_count": 0, "size": 0, "error": None,
+                  "category": category, "reason": None, "link_status": None}
         total = total_ref[0]
         label = f"[{index + 1}/{total}]" if total else f"[{index + 1}]"
         notify("item_start", {"index": index, "total": total, "id": video_id, "url": url})
         item_start = time.monotonic()
+        if category == "retry_due":
+            with stats_lock:
+                stats["retried"] += 1
 
         # 1. Détection du type. Une exception ici = type inconnu (pas d'historique).
         notify("step", {"id": video_id, "step": "detection"})
+        probe_exc = None
+        main.reset_last_error()
         try:
             flag = main.is_slideshow(url, username=username,
                                      cookies_browser=cookies_browser,
                                      cookies_file=cookies_file)
         except Exception as e:
             flag = None
+            probe_exc = e
             result["error"] = f"détection du type : {e}"
 
         if flag is None:
+            detail = main.last_error() or (str(probe_exc) if probe_exc is not None else "")
+            kind, reason = download_errors.classify_error(detail)
+            if detail and kind == "permanent":
+                # Vidéo supprimée / privée... : indisponible, jamais rejouée comme « type inconnu »
+                result["type"] = "unavailable"
+                result["reason"] = reason
+                result["error"] = result["error"] or f"détection du type : {detail}"
+                try:
+                    tri["lstate"].mark_unavailable(key, reason, detail)
+                    result["link_status"] = tri["lstate"].status(key)
+                except Exception as e:
+                    emit(f"{label} Impossible d'enregistrer l'état de {video_id} : {e}", "error")
+                with stats_lock:
+                    stats["failed"] += 1
+                    stats["processed"] += 1
+                    if result["link_status"] == "unavailable":
+                        stats["marked_unavailable"] += 1
+                emit(f"{label} {video_id} indisponible : {reason} ({detail})", "error")
+                return finish(result, index, item_start)
+
             result["type"] = "unknown"
             result["error"] = result["error"] or "type inconnu (cookies / réseau / yt-dlp ?)"
+            result["reason"] = reason
+            try:
+                _, status, entry = record_failure(key, detail or result["error"])
+                result["link_status"] = status
+                retry = _retry_text(entry)
+            except Exception as e:
+                retry = ""
+                emit(f"{label} Impossible d'enregistrer l'état de {video_id} : {e}", "error")
             emit(f"{label} Type inconnu pour {video_id} ({result['error']}) - ignoré, "
-                 f"réessai au prochain lancement", "error")
+                 f"réessai plus tard" + (f" : {retry}" if retry else ""), "error")
             with stats_lock:
                 stats["unknown"] += 1
             return finish(result, index, item_start)
@@ -304,6 +484,7 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
 
         # 2. Téléchargement + vérification + historique
         notify("step", {"id": video_id, "step": "telechargement"})
+        main.reset_last_error()
         try:
             if item_type == "slideshow":
                 emit(f"{label} Slideshow en cours : {url}", "info")
@@ -345,16 +526,30 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
                                        if ok else "échec du téléchargement de la vidéo")
         except Exception as e:
             result["error"] = f"exception : {e}"
+            download_exc = str(e)
+        else:
+            download_exc = None
 
-        if not result["success"]:
+        if result["success"]:
+            try:
+                tri["lstate"].clear(key)
+            except Exception as e:
+                emit(f"{label} Impossible d'effacer l'état de {video_id} : {e}", "warning")
+        else:
             with stats_lock:
                 stats["failed"] += 1
                 stats["processed"] += 1
-            emit(f"{label} Échec ({item_type}) : {result['error']}", "error")
+            # L'échec n'est plus écrit dans metadata.json : link_state.json fait foi
+            detail = main.last_error() or download_exc or result["error"]
+            retry = ""
             try:
-                record_history(video_id, url, item_type, file_size=0, success=False)
+                reason, status, entry = record_failure(key, detail)
+                result.update(reason=reason, link_status=status)
+                retry = f"{reason} - {_retry_text(entry)}"
             except Exception as e:
-                emit(f"{label} Impossible d'historiser l'échec de {video_id} : {e}", "error")
+                emit(f"{label} Impossible d'enregistrer l'échec de {video_id} : {e}", "error")
+            emit(f"{label} Échec ({item_type}) : {result['error']}"
+                 + (f" ({retry})" if retry else ""), "error")
 
         return finish(result, index, item_start)
 
@@ -368,34 +563,61 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
             return None
         return process_item(item, index)
 
-    try:
-        # ---------------------------------------------------------------- historique
+    def classify(key):
+        return triage.classify_id(key, tri["ctx"], force_update=force_update, now=tri["now"])
+
+    def run_body():
+        # ---------------------------------------------------------------- tri (chargement)
+        # Lecture seule : aucun dossier n'est créé tant qu'il n'y a rien à écrire.
         user_dir = main.get_user_dir(username)
-        os.makedirs(user_dir, exist_ok=True)
-        history = set(main.load_history(username))
+        history_success, history_failed = main.load_history_split(username)
+        disk = disk_index.scan_profile_dir(user_dir)
+        lstate = link_state.LinkState.load(user_dir)
+        if lstate.recovered_from_corruption:
+            emit("link_state.json illisible : mis de côté (.corrupt-*), états repartis de zéro",
+                 "warning")
+        ctx = triage.TriageContext(history_success=set(history_success),
+                                   history_failed=set(history_failed) - set(history_success),
+                                   disk=disk, state=lstate.items())
+        tri.update(ctx=ctx, lstate=lstate, now=datetime.now())
         if force_update:
             emit("Mode MAJ forcée activé", "warning")
-            # Les échecs historisés (success=False) sont réessayés en MAJ forcée
-            try:
-                failed_ids = {entry["id"] for entry in
-                              main.get_metadata_manager(username).get_failed_downloads()}
-                history -= failed_ids
-            except Exception as e:
-                emit(f"Impossible de lire les échecs historisés : {e}", "warning")
 
         # ---------------------------------------------------------------- listing
         # workers == 1 : flux continu (chaque élément est traité dès qu'il est listé).
         # workers > 1 : le listing est collecté en entier, puis traité par le pool.
         streaming = workers == 1
+        known = set()
         if import_mode:
-            # Import : la liste fournie remplace le listing, filtrée par la même boucle
-            pending = {e.get("id") for e in import_items
-                       if isinstance(e, dict) and e.get("id") and e.get("url")
-                       and e.get("id") not in history}
-            total_ref[0] = len(pending) or None  # total connu dès le départ
+            # Import : la liste fournie remplace le listing ; tri en amont, adoptions en lot
+            plan = triage.classify_links(import_items, ctx, force_update=force_update,
+                                         now=tri["now"])
+            for item, entry in plan.to_adopt:
+                adopt(item.get("id"), item.get("url"), entry)
+            total_ref[0] = len(plan.to_process) or None  # total connu dès le départ
             emit(f"Import de {len(import_items)} lien(s) pour @{username} "
-                 f"({len(pending)} à traiter)", "info")
+                 f"({len(plan.to_process)} à traiter)", "info")
+            c = plan.counts
+            extra = [f"{n} {label}" for n, label in (
+                (c["retry_waiting"], "en attente de réessai"), (c["duplicate"], "doublon(s)"),
+                (c["invalid"], "invalide(s)")) if n]
+            emit(f"{plan.total} liens : {c['downloaded']} déjà téléchargés, "
+                 f"{c['adopt']} adoptés depuis le disque, {c['retry_due']} à retenter, "
+                 f"{c['ignored']} ignorés, {c['unavailable']} indisponibles, "
+                 f"{c['new']} nouveaux" + (", " + ", ".join(extra) if extra else ""), "info")
         else:
+            # Fichiers présents sur le disque mais absents de l'historique : adoptés en lot
+            for key in sorted(disk):
+                if classify(key) == "adopt":
+                    adopt(key, None, disk[key])
+            if stats["adopted"]:
+                emit(f"{stats['adopted']} élément(s) déjà présent(s) sur le disque ajouté(s) "
+                     "à l'historique (non retéléchargés)", "info")
+            # Ids « connus » pour l'arrêt incrémental et le saut : succès, adoptés, ignorés,
+            # indisponibles, réessais non échus. retry_due et new n'en font jamais partie.
+            candidates = (set(ctx.history_success) | set(ctx.history_failed) | set(disk)
+                          | set(ctx.state))
+            known = {k for k in candidates if classify(k) in _KNOWN_CATEGORIES}
             emit(f"Analyse du profil @{username}...", "info")
         if streaming and not import_mode:
             emit("Téléchargement au fil du listing (flux continu)", "info")
@@ -405,7 +627,7 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
             try:
                 scan_report.clear()
                 generator = list(import_items) if import_mode else main.get_video_links(
-                    username, history, platform, limit=limit,
+                    username, known, platform, limit=limit,
                     # Log par défaut : get_video_links affiche déjà ses messages (pas de doublon)
                     callback_log=log if forward_extraction_logs else None,
                     force_update=force_update,
@@ -434,19 +656,28 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
                 extracted.append(video)
                 stats["total_extracted"] = len(extracted)
 
-                # Filtrage : déjà dans l'historique (sauf force_update) ou doublon dans ce run
-                video_id = video.get("id")
-                # Import : les succès historisés sont toujours sautés (force_update ne retente
-                # que les échecs, déjà retirés de `history`)
-                skip_known = import_mode or not force_update
-                if not video_id or not video.get("url") or video_id in seen \
-                        or (video_id in history and skip_known):
-                    stats["skipped"] += 1
+                # Tri de l'élément (mêmes règles que triage.classify_links)
+                is_dict = isinstance(video, dict)
+                raw_id = video.get("id") if is_dict else None
+                key = _item_key(raw_id)
+                if not key or not (video.get("url") if is_dict else None):
+                    category = "invalid"
+                elif key in seen:
+                    category = "duplicate"
                 else:
-                    seen.add(video_id)
+                    seen.add(key)
+                    # Adopté en lot au début du run : déjà compté
+                    category = None if key in tri["adopted_ids"] else classify(key)
+                if category in ("new", "retry_due"):
+                    categories[key] = category
                     items.append(video)
                     if streaming and task(video, len(items) - 1) is None and stop_requested():
                         break
+                elif category == "adopt":
+                    if not adopt(raw_id, video.get("url"), disk.get(key)):
+                        count_skip("adopt")
+                elif category is not None:
+                    count_skip(category)
                 if limit and len(extracted) >= limit:
                     break
         finally:
@@ -465,6 +696,10 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
 
         stats["total_extracted"] = len(extracted)
         notify("extraction_done", {"total": len(extracted)})
+        if not import_mode and stats["skipped"]:
+            emit(f"Tri : {stats['known']} déjà téléchargé(s), {stats['adopted']} adopté(s), "
+                 f"{stats['ignored']} ignoré(s), {stats['unavailable']} indisponible(s), "
+                 f"{stats['retry_waiting']} en attente de réessai", "info")
 
         if not items:
             if not stop_requested():
@@ -482,9 +717,16 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
                         future.result()
                     except Exception as e:  # filet de sécurité, task ne lève pas
                         emit(f"Erreur inattendue d'un worker : {e}", "error")
-    except Exception as e:
-        critical_error = True
-        emit(f"Erreur critique : {e}", "error")
+
+    try:
+        try:
+            run_body()
+        except Exception as e:
+            critical_error = True
+            emit(f"Erreur critique : {e}", "error")
+    finally:
+        # link_state.json : toujours sauvegardé (fin normale, arrêt, limite, exception)
+        save_state()
 
     stats["stopped"] = stop_event.is_set()
     if import_mode:

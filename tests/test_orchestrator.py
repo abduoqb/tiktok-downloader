@@ -123,6 +123,15 @@ def _history():
         return json.load(fh)
 
 
+def _link_state():
+    """États par id de link_state.json (source de vérité des échecs)."""
+    path = os.path.join("downloads", USERNAME, "link_state.json")
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)["items"]
+
+
 class SleepRecorder:
     def __init__(self, fake=None):
         self.calls = []
@@ -196,8 +205,12 @@ def test_video_failure_is_recorded(fake, mode):
     stats = _run()
 
     assert stats["failed"] == 1 and stats["videos"] == 0
-    assert _history()["5"]["success"] is False
+    # L'échec n'est plus écrit dans metadata.json mais dans link_state.json (réessai prévu)
+    assert "5" not in _history()
+    state = _link_state()["5"]
+    assert state["status"] == "retry" and state["attempts"] == 1 and state["next_retry"]
     assert stats["results"][0]["error"]
+    assert stats["results"][0]["link_status"] == "retry"
 
 
 def test_slideshow_failure_is_recorded(fake):
@@ -206,8 +219,9 @@ def test_slideshow_failure_is_recorded(fake):
     fake.fail.add("6")
     stats = _run()
     assert stats["failed"] == 1
-    entry = _history()["6"]
-    assert entry["type"] == "slideshow" and entry["success"] is False
+    assert stats["results"][0]["type"] == "slideshow"
+    assert "6" not in _history()
+    assert _link_state()["6"]["status"] == "retry"
 
 
 def test_exception_in_item_does_not_kill_run(fake):
@@ -219,7 +233,8 @@ def test_exception_in_item_does_not_kill_run(fake):
     assert [r["id"] for r in stats["results"]] == ["7", "8", "9"]
     assert "boom" in stats["results"][1]["error"]
     hist = _history()
-    assert hist["8"]["success"] is False and hist["9"]["success"] is True
+    assert "8" not in hist and hist["9"]["success"] is True
+    assert _link_state()["8"]["status"] == "retry" and "boom" in _link_state()["8"]["last_error"]
 
 
 def test_extraction_error_is_logged_and_run_returns(fake, monkeypatch):
@@ -245,32 +260,52 @@ def test_limit_is_applied(fake):
     assert [r["id"] for r in stats["results"]] == ["0", "1", "2"]
 
 
-def test_history_items_are_skipped_unless_force_update(fake):
+def test_history_items_are_skipped_even_with_force_update(fake):
+    # Nouvelle règle du tri : un succès historisé n'est JAMAIS retéléchargé (force_update ne
+    # fait que désactiver l'arrêt incrémental et retenter indisponibles / réessais en attente)
     main.save_to_history(USERNAME, "11", url=_url("11"), success=True)
     fake.ids = ["11", "12"]
 
     stats = _run()
-    assert stats["skipped"] == 1 and stats["videos"] == 1
+    assert stats["skipped"] == 1 and stats["known"] == 1 and stats["videos"] == 1
     assert fake.links_kwargs["force_update"] is False
 
     stats = _run(force_update=True)
     assert fake.links_kwargs["force_update"] is True
-    assert stats["skipped"] == 0 and stats["videos"] == 2
+    assert stats["skipped"] == 2 and stats["known"] == 2 and stats["videos"] == 0
+    assert [c for c in fake.calls if c[0] == "download_video"] == [("download_video", "12")]
 
 
-def test_failed_history_retried_only_with_force_update(fake):
+def test_legacy_failed_history_retried_once(fake):
+    # Échec hérité (success=False dans metadata.json, sans état) : retenté une fois par le tri
     main.save_to_history(USERNAME, "13", url=_url("13"), success=False)
     main.save_to_history(USERNAME, "14", url=_url("14"), success=True)
     fake.ids = ["13", "14"]
 
     stats = _run()
-    assert fake.history_seen == {"13", "14"}
-    assert stats["skipped"] == 2 and stats["videos"] == 0
-
-    stats = _run(force_update=True)
-    assert fake.history_seen == {"14"}          # l'échec 13 n'est plus dans l'historique
-    assert [r["id"] for r in stats["results"]] == ["13", "14"]
+    assert fake.history_seen == {"14"}          # l'échec 13 n'est pas « connu »
+    assert [r["id"] for r in stats["results"]] == ["13"]
+    assert stats["results"][0]["category"] == "retry_due" and stats["retried"] == 1
+    assert stats["skipped"] == 1 and stats["known"] == 1
     assert _history()["13"]["success"] is True
+
+
+def test_legacy_failed_then_follows_new_model(fake):
+    main.save_to_history(USERNAME, "13", url=_url("13"), success=False)
+    fake.ids = ["13"]
+    fake.fail.add("13")
+
+    stats = _run()                              # retenté une fois, échoue encore
+    assert stats["retried"] == 1 and stats["failed"] == 1
+    assert _link_state()["13"]["status"] == "retry"
+
+    stats = _run()                              # réessai pas encore échu : sauté et « connu »
+    assert stats["results"] == [] and stats["retry_waiting"] == 1 and stats["skipped"] == 1
+    assert fake.history_seen == {"13"}
+
+    stats = _run(force_update=True)             # force_update : retenté tout de suite
+    assert fake.history_seen == set()
+    assert [r["id"] for r in stats["results"]] == ["13"] and stats["retried"] == 1
 
 
 def test_stats_downloaded_and_processed(fake):
