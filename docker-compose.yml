@@ -10,14 +10,8 @@ services:
     volumes:
       # Persister les téléchargements
       - ./downloads:/app/downloads
-      # Persister la configuration (créez config.json avant de lancer)
-      - ./config.json:/app/config.json:ro
-      - ./telegram_topics.json:/app/telegram_topics.json
     environment:
       - FLASK_ENV=production
-      # Optionnel : utiliser des variables d'environnement au lieu de config.json
-      # - TELEGRAM_BOT_TOKEN=your_token_here
-      # - TELEGRAM_CHAT_ID=your_chat_id_here
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/"]
       interval: 30s

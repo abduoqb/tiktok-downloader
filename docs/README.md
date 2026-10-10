@@ -17,7 +17,6 @@ Bienvenue dans la documentation complète du projet TikTok Scraper.
 
 ### 🖥️ Interfaces
 - **[WEB_INTERFACE.md](WEB_INTERFACE.md)** - Guide d'utilisation de l'interface web Flask
-- **[TELEGRAM_TOPICS.md](TELEGRAM_TOPICS.md)** - Configuration et utilisation de l'intégration Telegram
 
 ### 🧪 Tests & Déploiement
 - **[GUIDE_TEST.md](GUIDE_TEST.md)** - Guide de test et validation des fonctionnalités
@@ -58,7 +57,6 @@ python web_app.py
 - **Métadonnées**: O(1) lookup, 99% d'appels API évités
 - **Formats**: Support vidéos + slideshows
 - **Export**: CSV, JSON, HTML
-- **Intégrations**: Telegram avec topics automatiques
 
 ---
 

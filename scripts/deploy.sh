@@ -85,7 +85,7 @@ echo -e "${GREEN}[6/8] Configuration de l'application...${NC}"
 if [ ! -f "$APP_DIR/config.json" ]; then
     if [ -f "$APP_DIR/config.json.example" ]; then
         sudo -u $APP_USER cp $APP_DIR/config.json.example $APP_DIR/config.json
-        echo -e "${YELLOW}⚠️  Pensez à éditer config.json avec vos tokens Telegram !${NC}"
+        echo -e "${YELLOW}⚠️  Pensez à vérifier config.json si nécessaire.${NC}"
         echo "   sudo nano $APP_DIR/config.json"
     fi
 fi
@@ -198,22 +198,19 @@ echo -e "${GREEN}✅ Application installée et démarrée !${NC}"
 echo ""
 echo "📝 Prochaines étapes:"
 echo ""
-echo "1. Configurer Telegram:"
-echo "   sudo nano $APP_DIR/config.json"
-echo ""
-echo "2. Redémarrer le service:"
+echo "1. Redémarrer le service:"
 echo "   sudo systemctl restart tiktok-scraper"
 echo ""
 if [ "$install_nginx" = "y" ] || [ "$install_nginx" = "Y" ]; then
     IP=$(hostname -I | awk '{print $1}')
-    echo "3. Accéder à l'application:"
+    echo "2. Accéder à l'application:"
     echo "   http://$IP"
     echo ""
-    echo "4. (Optionnel) Configurer SSL avec Let's Encrypt:"
+    echo "3. (Optionnel) Configurer SSL avec Let's Encrypt:"
     echo "   sudo certbot --nginx -d votre-domaine.com"
 else
     IP=$(hostname -I | awk '{print $1}')
-    echo "3. Accéder à l'application:"
+    echo "2. Accéder à l'application:"
     echo "   http://$IP:5000"
 fi
 echo ""

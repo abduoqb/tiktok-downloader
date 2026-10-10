@@ -26,7 +26,6 @@ Thumbs.db
 # Application data (will be mounted as volume)
 downloads/
 config.json
-telegram_topics.json
 
 # Logs
 *.log

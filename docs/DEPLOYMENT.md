@@ -45,12 +45,9 @@ ssh root@votre-ip-vps
 - ✅ Configurer nginx (optionnel)
 - ✅ Activer le pare-feu
 
-### 3. Configuration post-installation
+### 3. Post-installation
 
 ```bash
-# Éditez la configuration Telegram
-sudo nano /home/tiktok/tiktok-scraper/config.json
-
 # Redémarrez le service
 sudo systemctl restart tiktok-scraper
 ```
@@ -110,21 +107,7 @@ pip install gunicorn  # Pour la production
 
 ### Étape 5 : Configuration
 
-```bash
-# Copier le fichier de config exemple
-cp config.json.example config.json
-
-# Éditer la configuration
-nano config.json
-```
-
-Ajoutez vos tokens Telegram :
-```json
-{
-    "TELEGRAM_BOT_TOKEN": "votre_token_ici",
-    "TELEGRAM_CHAT_ID": "votre_chat_id_ici"
-}
-```
+Aucune configuration particulière n'est requise : passez à l'étape suivante.
 
 ### Étape 6 : Tester l'application
 
@@ -268,7 +251,7 @@ ufw status
 
 ### Variables d'environnement (Production)
 
-Pour plus de sécurité, utilisez des variables d'environnement au lieu de `config.json` :
+Vous pouvez définir les variables d'environnement de l'application dans un fichier `.env` :
 
 ```bash
 # Créer un fichier .env
@@ -277,8 +260,6 @@ nano /home/tiktok/tiktok-scraper/.env
 
 Contenu :
 ```env
-TELEGRAM_BOT_TOKEN=votre_token
-TELEGRAM_CHAT_ID=votre_chat_id
 FLASK_ENV=production
 ```
 
@@ -339,10 +320,6 @@ sudo journalctl -u tiktok-scraper -n 100
 # Se connecter en utilisateur tiktok
 sudo su - tiktok
 cd /home/tiktok/tiktok-scraper
-
-# Sauvegarder les données
-cp config.json config.json.bak
-cp telegram_topics.json telegram_topics.json.bak 2>/dev/null
 
 # Mettre à jour le code
 git pull origin master
@@ -443,11 +420,6 @@ DATE=$(date +%Y%m%d_%H%M%S)
 
 mkdir -p $BACKUP_DIR
 
-# Sauvegarder les configs
-tar -czf $BACKUP_DIR/config_$DATE.tar.gz \
-    /home/tiktok/tiktok-scraper/config.json \
-    /home/tiktok/tiktok-scraper/telegram_topics.json
-
 # Sauvegarder les historiques
 tar -czf $BACKUP_DIR/downloads_$DATE.tar.gz \
     /home/tiktok/tiktok-scraper/downloads/
@@ -504,7 +476,7 @@ USAGE=$(df -h /home/tiktok/tiktok-scraper/downloads | tail -1 | awk '{print $5}'
 
 if [ $USAGE -gt $THRESHOLD ]; then
     echo "ALERT: Disk usage is at ${USAGE}%"
-    # Envoyer une alerte (email, Telegram, etc.)
+    # Envoyer une alerte (email, etc.)
 fi
 ```
 

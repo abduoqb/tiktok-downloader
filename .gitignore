@@ -55,8 +55,14 @@ temp_slideshow/*
 
 # Configuration files (contains sensitive data)
 config.json
-telegram_topics.json
 
 # Temporary files
 *.tmp
 *.bak
+
+# Cookies / secrets / local artifacts
+tiktok.com_cookies.txt
+*cookies*.txt
+nul
+gallery-dl-config-temp.json
+temp_slideshow/

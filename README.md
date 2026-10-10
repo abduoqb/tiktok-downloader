@@ -1,6 +1,6 @@
 # TikTok Scraper
 
-Un outil Python complet pour extraire et télécharger des vidéos depuis TikTok et YouTube Shorts avec interface web moderne, détection intelligente des slideshows et intégration Telegram.
+Un outil Python complet pour extraire et télécharger des vidéos depuis TikTok et YouTube Shorts avec interface web moderne, détection intelligente des slideshows.
 
 ## Table des matières
 
@@ -9,7 +9,6 @@ Un outil Python complet pour extraire et télécharger des vidéos depuis TikTok
 - [Installation](#installation)
 - [Utilisation](#utilisation)
   - [Interface Web](#interface-web-recommandé)
-  - [Configuration Telegram](#configuration-optionnel)
   - [Ligne de Commande](#ligne-de-commande-cli)
 - [Structure des fichiers](#structure-des-fichiers)
 - [Exemples de workflows](#exemples-de-workflows)
@@ -46,7 +45,6 @@ python main.py charolife --download
 - Gestion d'historique JSON pour éviter les doublons
 - Support TikTok et YouTube Shorts
 - **Interface Web** : Dashboard complet avec logs en temps réel
-- **Intégration Telegram** : Envoi automatique des vidéos téléchargées vers des topics Telegram
 
 🧠 **Intelligence**
 - **Mode incrémental smart** : S'arrête après 10 vidéos consécutives déjà connues
@@ -82,48 +80,6 @@ pip install yt-dlp flask
    python web_app.py
    ```
 2. Ouvrez `http://localhost:5000` dans votre navigateur.
-
-### Configuration (Optionnel)
-
-#### Intégration Telegram
-
-Pour envoyer automatiquement les vidéos téléchargées vers un groupe Telegram :
-
-1. Créez un fichier `config.json` à la racine du projet (vous pouvez copier `config.json.example`) :
-   ```bash
-   cp config.json.example config.json
-   ```
-
-   Puis éditez-le avec vos informations :
-   ```json
-   {
-       "TELEGRAM_BOT_TOKEN": "votre_token_bot",
-       "TELEGRAM_CHAT_ID": "votre_chat_id"
-   }
-   ```
-
-2. Configuration du bot :
-   - Créez un bot via [@BotFather](https://t.me/BotFather) sur Telegram
-   - Récupérez le token du bot
-   - Ajoutez le bot à votre groupe
-   - Activez les topics dans votre groupe (Paramètres > Topics)
-   - Récupérez le chat ID du groupe
-
-3. Le système créera automatiquement un topic par profil TikTok
-   - Chaque vidéo téléchargée sera envoyée dans le topic correspondant
-   - Le mapping est sauvegardé dans `telegram_topics.json`
-
-**Note** : Si `config.json` n'existe pas, l'intégration Telegram est simplement désactivée.
-
-#### Gestion des topics Telegram
-
-Pour éviter les doublons de topics et gérer le mapping des profils existants, consultez **[TELEGRAM_TOPICS.md](TELEGRAM_TOPICS.md)**.
-
-Points clés :
-- Le système crée automatiquement un topic par profil
-- Le mapping est sauvegardé dans `telegram_topics.json`
-- Vous pouvez ajouter manuellement des topics existants via l'API
-- Depuis la v1.1, un système de verrous évite les doublons lors de téléchargements parallèles
 
 ### Ligne de Commande (CLI)
 
@@ -186,11 +142,8 @@ python main.py addisonre --download --min-sleep 1 --max-sleep 3
 tiktok/
 ├── main.py                           # Script CLI principal
 ├── web_app.py                        # Interface web Flask
-├── config.json                       # Configuration Telegram (créer depuis .example)
-├── config.json.example               # Template de configuration
-├── telegram_topics.json              # Mapping profils → topics Telegram
 ├── requirements.txt                  # Dépendances Python
-├── .gitignore                        # Fichiers à ignorer (dont config.json)
+├── .gitignore                        # Fichiers à ignorer
 ├── README.md                         # Ce fichier
 ├── templates/                        # Templates HTML
 │   ├── base.html
@@ -257,7 +210,6 @@ python main.py charlidamelio --download --limit 10
 **Avec Interface Web :**
 1. Ajoutez les profils via le formulaire
 2. Utilisez le bouton "Sync" sur chaque profil pour télécharger les nouveautés
-3. Les vidéos sont automatiquement envoyées vers Telegram (si configuré)
 
 ### Archivage complet d'un profil
 
@@ -302,18 +254,6 @@ L'interface web expose une API REST complète :
 
 Plus de détails dans [WEB_INTERFACE.md](WEB_INTERFACE.md)
 
-## Sécurité
-
-**IMPORTANT** : Le fichier `config.json` contient des informations sensibles (token Telegram).
-
-Assurez-vous de :
-- Ne **jamais** commiter `config.json` dans Git (déjà dans `.gitignore`)
-- Créer votre `config.json` depuis `config.json.example`
-- Utiliser des variables d'environnement en production
-- Ne pas partager votre bot token publiquement
-
-**Note** : `config.json` et `telegram_topics.json` sont déjà ignorés par Git.
-
 ## Dépannage
 
 ### "No new videos found"
@@ -332,30 +272,12 @@ Assurez-vous de :
 
 Supprimez `downloads/<username>/download_history.json` pour recommencer.
 
-### Problèmes Telegram
-
-**Les vidéos ne sont pas envoyées sur Telegram :**
-- Vérifiez que `config.json` existe et contient les bonnes informations
-- Vérifiez que le bot est bien ajouté au groupe
-- Vérifiez que le bot a les droits d'administrateur dans le groupe
-- Vérifiez que les topics sont activés dans le groupe
-- Consultez les logs de l'application pour voir les erreurs
-
-**Le topic n'est pas créé automatiquement :**
-- Le bot doit avoir les droits de "Manage Topics" dans le groupe
-- Vérifiez que les topics sont activés (Paramètres du groupe > Topics)
-
-**Fichier trop volumineux :**
-- Telegram a une limite de 50 MB pour les fichiers envoyés par bot
-- Les vidéos > 50 MB ne seront pas envoyées (erreur dans les logs)
-
 ## Limitations
 
 - ❌ **Profils privés** : Non supportés
 - ⚠️ **Rate limiting** : Respectez des délais raisonnables
 - ❌ **Lives** : Non supportés
 - ⚠️ **Slideshows** : Détectés mais non téléchargés (limitations de yt-dlp)
-- ⚠️ **Telegram** : Limite de 50 MB par fichier (limite Telegram Bot API)
 
 ## Technologies
 
@@ -371,9 +293,8 @@ Supprimez `downloads/<username>/download_history.json` pour recommencer.
 - **JavaScript (Vanilla)** : Interactions client
 - **Jinja2** : Moteur de templates
 
-### Intégrations
-- **Telegram Bot API** : Envoi automatique de vidéos
-- **JSON** : Stockage des données (historique, configuration, mapping)
+### Stockage
+- **JSON** : Stockage des données (historique, métadonnées)
 
 ### Architecture
 - **RESTful API** : Communication frontend-backend
@@ -416,7 +337,6 @@ python web_app.py
 
 ### Court terme
 - ✅ Interface web moderne
-- ✅ Intégration Telegram
 - ✅ Lecteur vidéo intégré
 - ⬜ Barre de progression en temps réel
 - ⬜ Filtres et recherche dans la liste des vidéos
@@ -463,9 +383,6 @@ Le script installe automatiquement :
 ### Configuration post-installation
 
 ```bash
-# Éditer la configuration Telegram
-sudo nano /home/tiktok/tiktok-scraper/config.json
-
 # Redémarrer le service
 sudo systemctl restart tiktok-scraper
 
@@ -480,7 +397,6 @@ Pour une installation manuelle détaillée, configuration SSL, sauvegardes autom
 ## Documentation complémentaire
 
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** : Guide complet de déploiement sur VPS (installation, configuration, sécurité)
-- **[TELEGRAM_TOPICS.md](TELEGRAM_TOPICS.md)** : Gestion des topics Telegram et résolution des doublons
 - **[WEB_INTERFACE.md](WEB_INTERFACE.md)** : Guide détaillé de l'interface web et de l'API REST
 - **[explication_projet.md](explication_projet.md)** : Architecture technique et choix de conception
 - **[analysis.md](analysis.md)** : Analyse approfondie du projet
