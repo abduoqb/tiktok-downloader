@@ -5,6 +5,17 @@ Tous les changements notables de ce projet seront documentés dans ce fichier.
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [1.10.0] - 2026-10-10
+
+### Ajouté
+- **Import d'une liste de liens** (filet de sécurité si TikTok bloque le listing) : `links_import.parse_links` (extraction, normalisation, dédoublonnage, groupement par pseudo, validation `[\w.\-]+` contre toute traversée de chemin, liens courts `vm.`/`vt.` ignorés et comptés), `orchestrator.run_import` (= `run_download(items=...)` : même boucle, total connu, succès historisés sautés, `force_update` retente les échecs, **scan_state.json jamais modifié**), route `POST /api/import` (409 par pseudo, 400 si aucun lien ou plus de 5000, un thread séquentiel par import), CLI `main.py --links-file FICHIER|-`
+- Interface : section repliable « Importer une liste de liens » (3 étapes, commande de console avec bouton « Copier », zone de texte ou fichier .txt, compteur de liens en direct)
+- `static/js/export_links.js` : commande de console qui défile sur un profil TikTok et exporte `tiktok_liens_<pseudo>.txt` (non vérifiée sur le vrai DOM TikTok)
+- Tests : `test_links_import.py`, `test_import_mode.py`, `test_web_import.py`, `test_cli_links_file.py`, `test_export_links.py` (Playwright, page simulée)
+
+### Modifié
+- `web_app.emit_download_summary` et `main._print_download_summary` factorisés (partagés avec l'import)
+
 ## [1.9.0] - 2026-10-10
 
 ### Modifié

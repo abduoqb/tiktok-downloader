@@ -105,13 +105,14 @@ python main.py <username_ou_url> [options]
 
 | Option | Défaut | Description |
 |--------|--------|-------------|
-| `username_ou_url` | requis | Nom du compte, ou URL d'une vidéo TikTok |
+| `username_ou_url` | requis (sauf avec `--links-file`) | Nom du compte, ou URL d'une vidéo TikTok |
 | `--download` | désactivé | Télécharge (sans cette option : extraction des liens seulement) |
 | `--limit N` | aucune | Nombre maximal de nouvelles vidéos. **`0` ou absent = illimité** |
 | `--min-sleep S` / `--max-sleep S` | `2` / `6` | Pause aléatoire entre deux éléments (secondes) |
 | `--force-update` | désactivé | Ignore l'arrêt incrémental et relance les échecs |
 | `--cookies-file FICHIER` | aucun | Fichier de cookies au format Netscape |
 | `--cookies-browser NAVIGATEUR` | aucun | `chrome`, `firefox`, `edge`, `safari`, `opera`, `brave` (le fichier prime s'il est donné) |
+| `--links-file FICHIER` | aucun | Importe une liste de liens (`-` = entrée standard), voir « Importer une liste de liens » |
 | `--platform` | `tiktok` | `tiktok` ou `youtube` |
 
 Le code de sortie est `1` si l'extraction échoue ou si le type d'une URL est inconnu.
@@ -139,6 +140,30 @@ python main.py "https://www.tiktok.com/@moncompte/video/7574516139682729238"
 ```
 
 Des pauses trop courtes peuvent faire bannir votre IP.
+
+### Importer une liste de liens
+
+**Pourquoi.** TikTok bloque le listing automatique d'un profil (captcha sans session, yt-dlp cassé, gallery-dl qui peut être bloqué à tout moment). Filet de sécurité : exporter la liste des liens depuis votre navigateur connecté, puis la faire télécharger par l'outil (historique, cookies, H.264, pauses : tout est identique à un téléchargement normal). Un import ne modifie jamais l'état de scan du profil.
+
+**Les 3 étapes** (section « Importer une liste de liens » de l'interface web) :
+
+1. Ouvrez le profil sur tiktok.com dans votre navigateur connecté.
+2. Ouvrez la console (F12, onglet Console), collez la commande affichée dans l'interface (bouton « Copier la commande », source : `static/js/export_links.js`) et validez. Si le navigateur le demande, tapez d'abord `allow pasting`. Le script défile jusqu'à ce qu'aucun nouveau lien n'apparaisse pendant 6 s (maximum 15 min), puis télécharge `tiktok_liens_<pseudo>.txt` et copie la liste dans le presse-papiers.
+3. Collez le contenu (ou choisissez le fichier) dans « Liens des vidéos », puis « Importer et télécharger ».
+
+Les liens sont groupés par pseudo (un dossier par pseudo), dédoublonnés et normalisés ; les liens courts `vm.tiktok.com` sont ignorés (ils ne peuvent pas être résolus sans réseau). Maximum 5000 liens par import. Les pauses et « Tout rescanner » (qui retente les échecs) du formulaire s'appliquent.
+
+**En ligne de commande :**
+
+```bash
+python main.py --links-file tiktok_liens_pseudo.txt --min-sleep 2 --max-sleep 6
+python main.py --links-file - < liens.txt          # lit l'entrée standard
+python main.py monpseudo --links-file liens.txt    # tous les liens rangés sous ce pseudo
+```
+
+Options acceptées : `--min-sleep`, `--max-sleep`, `--cookies-file`, `--cookies-browser`, `--force-update`. Code de sortie `1` si aucun lien valide.
+
+**Limite.** Le script de console n'a pas pu être vérifié sur le vrai DOM de TikTok (captcha sans session) : il reste volontairement générique (ancres `a[href*="/video/"]` / `/photo/` du profil ouvert) et n'est testé que sur une page simulée (`tests/test_export_links.py`). Si TikTok change sa page, un export partiel est possible : relancez-le, les doublons et les vidéos déjà téléchargées sont ignorés.
 
 ## Comment ça marche
 

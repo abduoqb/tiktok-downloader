@@ -28,6 +28,9 @@ from main import (
 )
 import ytdlp_options
 import orchestrator
+import links_import
+
+MAX_IMPORT_LINKS = 5000
 
 app = Flask(__name__)
 
@@ -226,11 +229,20 @@ def stream_logs():
     # stream_with_context est important si on accède à des variables de config Flask
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
+def _read_export_script():
+    """Texte de static/js/export_links.js (commande de console affichée dans l'interface)."""
+    try:
+        path = os.path.join(app.static_folder, 'js', 'export_links.js')
+        with open(path, 'r', encoding='utf-8') as fh:
+            return fh.read()
+    except OSError:
+        return ''
+
 @app.route('/')
 def index():
     """Main dashboard page"""
     profiles = get_all_profiles()
-    return render_template('index.html', profiles=profiles)
+    return render_template('index.html', profiles=profiles, export_script=_read_export_script())
 
 @app.route('/profile/<username>')
 def profile_details(username):
@@ -458,6 +470,74 @@ def start_download():
         'message': f'Download started for @{username}'
     })
 
+@app.route('/api/import', methods=['POST'])
+def start_import():
+    """Importe une liste de liens (texte libre) et les télécharge via orchestrator.run_import."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Corps JSON attendu'}), 400
+    text = data.get('text')
+    if not isinstance(text, str) or not text.strip():
+        return jsonify({'error': 'Collez au moins un lien de vidéo TikTok.'}), 400
+
+    forced = data.get('username')
+    if isinstance(forced, str):
+        forced = forced.strip().lstrip('@')
+    if forced in (None, ''):
+        forced = None
+    elif not isinstance(forced, str) or not links_import.is_valid_username(forced):
+        return jsonify({'error': 'Pseudo invalide : lettres, chiffres, point, tiret et '
+                                 'tiret bas uniquement.'}), 400
+
+    groups, report = links_import.parse_links(text)
+    total = sum(len(items) for items in groups.values())
+    if total == 0:
+        return jsonify({'error': 'Aucun lien de vidéo TikTok valide trouvé. Format attendu : '
+                                 'https://www.tiktok.com/@pseudo/video/123...',
+                        'ignored': report['ignored'], 'invalid': report['invalid']}), 400
+    if total > MAX_IMPORT_LINKS:
+        return jsonify({'error': f'Trop de liens ({total}) : maximum {MAX_IMPORT_LINKS} par import. '
+                                 'Découpez la liste en plusieurs parties.'}), 400
+
+    # Liste ordonnée de (dossier, éléments)
+    if forced:
+        merged = [item for items in groups.values() for item in items]
+        plan = [(links_import.folder_name(forced), merged)]
+    else:
+        plan = [(links_import.folder_name(items[0]['username']), items)
+                for items in groups.values()]
+
+    min_sleep, max_sleep = _normalize_sleep(data.get('min_sleep'), data.get('max_sleep'))
+    force_update = bool(data.get('force_update', False))
+
+    names = [name for name, _ in plan]
+    for name in names:
+        thread = active_threads.get(name)
+        if thread is not None:
+            if thread.is_alive():
+                return jsonify({'error': f'Une tâche est déjà en cours pour @{name}.'}), 409
+            del active_threads[name]
+            active_tasks.pop(name, None)
+
+    thread = threading.Thread(
+        target=background_import_task, args=(plan, min_sleep, max_sleep, force_update),
+        daemon=True)
+    for name in names:
+        active_threads[name] = thread
+        active_tasks[name] = "queued"
+    thread.start()
+
+    counts = {name: len(items) for name, items in plan}
+    return jsonify({
+        'status': 'started',
+        'task_id': names[0],
+        'message': f'Import de {total} lien(s) démarré pour ' + ', '.join('@' + n for n in names),
+        'counts': counts,
+        'ignored': report['ignored'],
+        'invalid': report['invalid'],
+        'duplicates': report['duplicates'],
+    })
+
 @app.route('/api/task/<task_id>')
 def get_task_status(task_id):
     """Get the status of a background task"""
@@ -651,6 +731,63 @@ def calculate_total_size():
 
 
 
+def emit_download_summary(username, stats):
+    """Barre finale + bloc RÉSUMÉ dans le journal (partagé par téléchargement et import)."""
+    downloaded_videos = stats["videos"]
+    downloaded_slideshows = stats["slideshows"]
+    failed_count = stats["failed"]
+    unknown_count = stats["unknown"]
+    total_size_mb = stats["size_mb"]
+    total_time = stats["duration_s"]
+    total_downloaded = stats["downloaded"]
+    processed = stats["processed"]
+
+    # Barre finale
+    if total_downloaded > 0:
+        emit_progress_bar(total_downloaded, processed, total_time, total_size_mb)
+
+    minutes = int(total_time // 60)
+    seconds = int(total_time % 60)
+
+    separator = "=" * 68
+    emit_log("", "info", "SUMMARY")
+    emit_log(separator, "info", "SUMMARY")
+    emit_log(f"RÉSUMÉ - @{username}", "info", "SUMMARY")
+    emit_log(separator, "info", "SUMMARY")
+    emit_log("", "info", "SUMMARY")
+
+    emit_log("Téléchargement:", "info", "SUMMARY")
+    success_rate = (total_downloaded / processed * 100) if processed > 0 else 0
+    emit_log(f"  Succès:                         {total_downloaded}/{processed} ({success_rate:.0f}%)", "info", "SUMMARY")
+    emit_log(f"    - Vidéos:                     {downloaded_videos}", "info", "SUMMARY")
+    emit_log(f"    - Slideshows:                 {downloaded_slideshows}", "info", "SUMMARY")
+    emit_log(f"  Échecs:                         {failed_count}", "info", "SUMMARY")
+    if unknown_count:
+        emit_log(f"  Type inconnu (réessai prévu):   {unknown_count}", "error", "SUMMARY")
+    emit_log(f"  Durée totale:                   {minutes}m {seconds:02d}s", "info", "SUMMARY")
+    emit_log(f"  Taille totale:                  {total_size_mb:.1f} MB", "info", "SUMMARY")
+    if total_downloaded > 0 and total_time > 0:
+        avg_speed = total_size_mb / (total_time / 60)
+        emit_log(f"  Vitesse moyenne:                {avg_speed:.1f} MB/min", "info", "SUMMARY")
+    emit_log("", "info", "SUMMARY")
+
+    emit_log("Stockage:", "info", "SUMMARY")
+    emit_log(f"  Dossier:                        downloads/{username}/", "info", "SUMMARY")
+
+    # Calculer l'espace total utilisé
+    user_dir = get_user_dir(username)
+    total_dir_size = 0
+    if os.path.exists(user_dir):
+        for f in os.listdir(user_dir):
+            file_path = os.path.join(user_dir, f)
+            if os.path.isfile(file_path):
+                total_dir_size += os.path.getsize(file_path)
+    total_dir_size_mb = total_dir_size / (1024 * 1024)
+    emit_log(f"  Espace utilisé (total):         {total_dir_size_mb:.1f} MB", "info", "SUMMARY")
+    emit_log("", "info", "SUMMARY")
+    emit_log(separator, "info", "SUMMARY")
+
+
 def background_download_task(username, platform, min_sleep, max_sleep, force_update=False, limit=None):
     """Background task: mince adaptateur autour de orchestrator.run_download."""
     global active_tasks
@@ -730,50 +867,7 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         if processed == 0 and unknown_count == 0:
             return  # rien traité : l'orchestrateur a déjà loggé la raison
 
-        # Barre finale
-        if total_downloaded > 0:
-            emit_progress_bar(total_downloaded, processed, total_time, total_size_mb)
-
-        minutes = int(total_time // 60)
-        seconds = int(total_time % 60)
-
-        separator = "=" * 68
-        emit_log("", "info", "SUMMARY")
-        emit_log(separator, "info", "SUMMARY")
-        emit_log(f"RÉSUMÉ - @{username}", "info", "SUMMARY")
-        emit_log(separator, "info", "SUMMARY")
-        emit_log("", "info", "SUMMARY")
-
-        emit_log("Téléchargement:", "info", "SUMMARY")
-        success_rate = (total_downloaded / processed * 100) if processed > 0 else 0
-        emit_log(f"  Succès:                         {total_downloaded}/{processed} ({success_rate:.0f}%)", "info", "SUMMARY")
-        emit_log(f"    - Vidéos:                     {downloaded_videos}", "info", "SUMMARY")
-        emit_log(f"    - Slideshows:                 {downloaded_slideshows}", "info", "SUMMARY")
-        emit_log(f"  Échecs:                         {failed_count}", "info", "SUMMARY")
-        if unknown_count:
-            emit_log(f"  Type inconnu (réessai prévu):   {unknown_count}", "error", "SUMMARY")
-        emit_log(f"  Durée totale:                   {minutes}m {seconds:02d}s", "info", "SUMMARY")
-        emit_log(f"  Taille totale:                  {total_size_mb:.1f} MB", "info", "SUMMARY")
-        if total_downloaded > 0 and total_time > 0:
-            avg_speed = total_size_mb / (total_time / 60)
-            emit_log(f"  Vitesse moyenne:                {avg_speed:.1f} MB/min", "info", "SUMMARY")
-        emit_log("", "info", "SUMMARY")
-
-        emit_log("Stockage:", "info", "SUMMARY")
-        emit_log(f"  Dossier:                        downloads/{username}/", "info", "SUMMARY")
-
-        # Calculer l'espace total utilisé
-        user_dir = get_user_dir(username)
-        total_dir_size = 0
-        if os.path.exists(user_dir):
-            for f in os.listdir(user_dir):
-                file_path = os.path.join(user_dir, f)
-                if os.path.isfile(file_path):
-                    total_dir_size += os.path.getsize(file_path)
-        total_dir_size_mb = total_dir_size / (1024 * 1024)
-        emit_log(f"  Espace utilisé (total):         {total_dir_size_mb:.1f} MB", "info", "SUMMARY")
-        emit_log("", "info", "SUMMARY")
-        emit_log(separator, "info", "SUMMARY")
+        emit_download_summary(username, stats)
 
     except Exception as e:
         emit_log(f"Erreur critique: {str(e)}", "error", "SYSTEM")
@@ -784,6 +878,65 @@ def background_download_task(username, platform, min_sleep, max_sleep, force_upd
         # Clean up thread reference
         if username in active_threads:
             del active_threads[username]
+
+def background_import_task(plan, min_sleep, max_sleep, force_update=False):
+    """Tâche d'import : traite les pseudos l'un après l'autre dans ce thread."""
+    global active_tasks
+    names = [name for name, _ in plan]
+    cookies_file = ytdlp_options.default_cookies_file()
+    if not cookies_file:
+        emit_log("Fichier cookies non trouvé, import sans authentification", "warning", "SYSTEM")
+
+    try:
+        for username, items in plan:
+            if shutdown_event.is_set() or any(active_tasks.get(n) == "stopping" for n in names):
+                emit_log("Arrêt demandé, import interrompu", "warning", "IMPORT")
+                break
+            active_tasks[username] = "running"
+
+            def log(msg, level="info"):
+                emit_log(msg, level, "IMPORT")
+
+            def should_stop(username=username):
+                return active_tasks.get(username) == "stopping" or shutdown_event.is_set()
+
+            state = {"ok": 0, "last_progress": time.time()}
+
+            def progress(event, data, state=state):
+                if event == "item_done" and data.get("success"):
+                    state["ok"] += 1
+                    now = time.time()
+                    if now - state["last_progress"] >= 60:
+                        emit_progress_bar(state["ok"], data.get("total") or None,
+                                          data.get("elapsed_s", 0), data.get("total_size_mb", 0.0))
+                        state["last_progress"] = now
+
+            try:
+                stats = orchestrator.run_import(
+                    username, items, min_sleep=min_sleep, max_sleep=max_sleep,
+                    cookies_file=cookies_file, force_update=force_update,
+                    log=log, progress=progress, should_stop=should_stop)
+                if stats["processed"] > 0 or stats["unknown"] > 0:
+                    emit_download_summary(username, stats)
+                else:
+                    emit_log(f"Aucune nouvelle vidéo à télécharger pour @{username} "
+                             f"({stats['skipped']} déjà connue(s))", "warning", "IMPORT")
+            except Exception as e:
+                emit_log(f"Erreur critique: {str(e)}", "error", "SYSTEM")
+                traceback.print_exc()
+            if active_tasks.get(username) != "stopping":
+                active_tasks[username] = "done"
+    except Exception as e:
+        emit_log(f"Erreur critique: {str(e)}", "error", "SYSTEM")
+        traceback.print_exc()
+    finally:
+        me = threading.current_thread()
+        for name in names:
+            if active_tasks.get(name) != "stopping":
+                active_tasks[name] = "done"
+            if active_threads.get(name) is me:
+                del active_threads[name]
+
 
 if __name__ == '__main__':
     from preflight import check_environment

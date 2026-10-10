@@ -37,6 +37,9 @@
     details.opts summary .chev { transition: transform .15s; display: inline-block; }
     details.opts[open] summary .chev { transform: rotate(90deg); }
 
+    .code-box { background: var(--void); border: 2px solid var(--line2); padding: 12px 14px; max-height: 170px; overflow: auto; font-size: 12px; line-height: 1.5; color: var(--dim); white-space: pre; margin: 0; }
+    .import-text { font-size: 13px; resize: vertical; min-height: 120px; white-space: pre; overflow: auto; }
+
     .stat-val { font-size: 28px; font-weight: 800; line-height: 1.1; }
 
     .log-line { padding: 3px 0; border-bottom: 1px solid #1d1d2a; word-break: break-word; }
@@ -93,6 +96,42 @@
                 </div>
             </details>
         </div>
+    </section>
+
+    <!-- Importer une liste de liens (filet de sécurité si le listing automatique est bloqué) -->
+    <section aria-labelledby="titre-import" class="panel p-5 sm:p-6">
+        <details id="importBox" class="opts">
+            <summary id="titre-import"><span class="chev" aria-hidden="true">▸</span> Importer une liste de liens</summary>
+            <p class="text-dim mt-3 max-w-3xl">Si TikTok bloque le listing automatique d'un profil, récupérez les liens depuis votre navigateur connecté, puis collez-les ici. Ils sont téléchargés comme d'habitude (historique, pauses, cookies).</p>
+
+            <ol class="list-decimal pl-6 mt-4 space-y-1 max-w-3xl text-dim">
+                <li>Ouvrez le profil sur tiktok.com dans votre navigateur, connecté à votre compte.</li>
+                <li>Ouvrez la console (touche F12, onglet Console), collez la commande ci-dessous, puis validez avec Entrée. Si le navigateur le demande, tapez d'abord <code class="text-ink">allow pasting</code>. Attendez la fin du défilement : un fichier <code class="text-ink">tiktok_liens_pseudo.txt</code> est téléchargé.</li>
+                <li>Revenez ici et collez le contenu du fichier (ou choisissez le fichier), puis cliquez sur « Importer et télécharger ».</li>
+            </ol>
+
+            <div class="mt-5 max-w-3xl">
+                <div class="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                    <span class="field-label !mb-0" id="cmd-label">Commande à coller dans la console</span>
+                    <button type="button" id="copyCmdBtn" class="btn btn-sm">Copier la commande</button>
+                </div>
+                <pre class="code-box" tabindex="0" aria-labelledby="cmd-label"><code id="exportCmd">{{ export_script }}</code></pre>
+            </div>
+
+            <div class="mt-6 max-w-3xl">
+                <label for="importText" class="field-label">Liens des vidéos</label>
+                <textarea id="importText" class="input import-text" rows="7" spellcheck="false" autocomplete="off" placeholder="https://www.tiktok.com/@pseudo/video/1234567890123456789"></textarea>
+                <div class="flex items-center justify-between flex-wrap gap-3 mt-2">
+                    <p id="importCount" class="text-dim font-bold" role="status" aria-live="polite">0 lien valide détecté</p>
+                    <div>
+                        <label for="importFile" class="sr-only">Choisir un fichier texte de liens</label>
+                        <input type="file" id="importFile" accept=".txt,text/plain" class="text-sm text-dim max-w-full">
+                    </div>
+                </div>
+                <p class="field-help">Un lien par ligne. Les pauses et l'option « Tout rescanner » de la section Options s'appliquent. Les vidéos déjà téléchargées sont ignorées.</p>
+                <button type="button" id="importBtn" class="btn btn-primary mt-4" disabled>Importer et télécharger</button>
+            </div>
+        </details>
     </section>
 
     <!-- Statistiques -->
@@ -326,6 +365,84 @@
 
         document.getElementById('extractForm').addEventListener('submit', (e) => { e.preventDefault(); launch('download'); });
         document.getElementById('listBtn').addEventListener('click', () => launch('extract'));
+
+        // --- Import d'une liste de liens ---
+        // Même règle que links_import.LINK_PATTERN (Python) : garder les deux synchronisés.
+        const LINK_RE = /(?<![\w.\-@\/])(?:https?:\/\/)?(?:www\.|m\.)?tiktok\.com\/@([\w.\-]+)\/(video|photo)\/(\d+)(?!\w)/gi;
+        const MAX_IMPORT = 5000;
+
+        function countLinks(text) {
+            const ids = new Set();
+            for (const m of text.matchAll(LINK_RE)) {
+                if (/[^.]/.test(m[1])) ids.add(m[3]);
+            }
+            return ids.size;
+        }
+
+        function updateImportCount() {
+            const n = countLinks(document.getElementById('importText').value);
+            const label = document.getElementById('importCount');
+            label.textContent = n + (n > 1 ? ' liens valides détectés' : ' lien valide détecté')
+                + (n > MAX_IMPORT ? ' (maximum ' + MAX_IMPORT + ' par import)' : '');
+            label.style.color = n > MAX_IMPORT ? 'var(--rose)' : '';
+            document.getElementById('importBtn').disabled = n === 0 || n > MAX_IMPORT;
+            return n;
+        }
+        document.getElementById('importText').addEventListener('input', updateImportCount);
+
+        document.getElementById('importFile').addEventListener('change', async (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            try {
+                const content = await file.text();
+                const box = document.getElementById('importText');
+                box.value = box.value.trim() ? box.value.replace(/\s*$/, '\n') + content : content;
+                updateImportCount();
+                showNotification('Fichier chargé : ' + file.name, 'info');
+            } catch (err) {
+                showNotification('Impossible de lire ce fichier.', 'error');
+            }
+            e.target.value = '';
+        });
+
+        document.getElementById('copyCmdBtn').addEventListener('click', async () => {
+            const text = document.getElementById('exportCmd').textContent;
+            try {
+                await navigator.clipboard.writeText(text);
+                showNotification('Commande copiée. Collez-la dans la console de TikTok.', 'success');
+            } catch (err) {
+                const range = document.createRange();
+                range.selectNodeContents(document.getElementById('exportCmd'));
+                const sel = window.getSelection();
+                sel.removeAllRanges(); sel.addRange(range);
+                showNotification('Copie automatique impossible : la commande est sélectionnée, faites Ctrl+C.', 'error');
+            }
+        });
+
+        document.getElementById('importBtn').addEventListener('click', async () => {
+            const n = updateImportCount();
+            if (n === 0) { showNotification('Aucun lien valide à importer.', 'error'); return; }
+            const btn = document.getElementById('importBtn');
+            btn.disabled = true;
+            const f = readForm();
+            try {
+                const res = await post('/api/import', {
+                    text: document.getElementById('importText').value,
+                    min_sleep: f.min_sleep, max_sleep: f.max_sleep, force_update: f.force_update
+                });
+                if (res.ok && res.data.status === 'started') {
+                    let msg = res.data.message + '. Suivez le journal.';
+                    if (res.data.ignored) msg += ' ' + res.data.ignored + ' lien(s) court(s) ignoré(s).';
+                    showNotification(msg, 'success');
+                } else {
+                    showNotification(res.data.error || 'Le serveur a refusé la demande.', 'error');
+                }
+            } catch (error) {
+                showNotification('Serveur injoignable. Vérifiez que web_app.py tourne.', 'error');
+            } finally {
+                updateImportCount();
+            }
+        });
 
         // --- Mise à jour d'un profil existant ---
         async function syncProfile(username) {

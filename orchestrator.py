@@ -10,6 +10,12 @@ Point d'entrée : run_download(). Il enchaîne :
     4. sauvegarde des liens listés (main.save_links_to_file), une seule fois en fin de run
        (aussi en cas d'arrêt ou d'erreur).
 
+Import d'une liste de liens : run_import() (ou run_download(items=...)) court-circuite le
+listing et réutilise EXACTEMENT la même boucle de traitement (pauses, détection du type,
+téléchargement, vérification, historique, arrêt, progression). Le total est connu d'avance et
+scan_state.json n'est jamais modifié : un import ne marque ni ne démarque le profil comme
+entièrement scanné.
+
 Règles métier :
     - is_slideshow renvoie True / False / None. None = type inconnu : erreur loggée,
       compté dans `unknown`, jamais téléchargé comme vidéo, NON écrit dans
@@ -115,7 +121,8 @@ def _update_scan_state(username, stats, scan_report, items, critical_error, emit
 
 def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit=None,
                  force_update=False, cookies_file=None, cookies_browser=None, workers=1,
-                 log=None, progress=None, should_stop=None, sleep=None, forward_extraction_logs=True):
+                 log=None, progress=None, should_stop=None, sleep=None, forward_extraction_logs=True,
+                 items=None):
     """
     Télécharge les nouvelles vidéos et slideshows d'un profil.
 
@@ -129,6 +136,8 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
             éléments historisés avec success=False (retirés de l'historique transmis à
             main.get_video_links et du filtre de saut). Sans force_update, les échecs
             historisés restent ignorés comme les succès.
+            En mode import (items), les succès historisés restent TOUJOURS sautés ; seuls les
+            échecs sont retentés avec force_update.
         cookies_file, cookies_browser: Transmis à toutes les fonctions de main.
         workers: 1 = séquentiel sans thread, en flux continu (téléchargement pendant le
             listing) ; >1 = listing complet d'abord, puis pool de threads (augmente le
@@ -143,6 +152,9 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         sleep: callable(seconds), injectable pour les tests (défaut time.sleep).
         forward_extraction_logs: True = les logs d'extraction de main.get_video_links sont
             aussi transmis à `log` ; False (CLI) = seulement le print de get_video_links.
+        items: liste de dicts {"id", "url"} déjà connus (import de liens). Si fournie : ni
+            listing, ni limit, ni mise à jour de scan_state.json, ni save_links_to_file ;
+            workers est forcé à 1 et le total est connu dès le début (progress total != None).
 
     Returns:
         dict: videos, slideshows, failed, unknown, skipped, downloaded (videos+slideshows),
@@ -154,7 +166,8 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
     log_fn = log or _default_log
     should_stop_fn = should_stop or (lambda: False)
     sleep_fn = sleep or time.sleep
-    workers = max(1, int(workers or 1))
+    import_mode = items is not None
+    workers = 1 if import_mode else max(1, int(workers or 1))
     min_sleep, max_sleep = _normalize_sleep(min_sleep, max_sleep)
     start = time.monotonic()
 
@@ -177,7 +190,8 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
     }
     scan_report = {}
     extracted = []
-    items = []
+    import_items = items if import_mode else None
+    items = []  # éléments à traiter (après filtrage historique / doublons)
     total_ref = [None]  # total d'éléments à traiter ; None tant que le listing n'est pas fini
     critical_error = False
     stats_lock = threading.Lock()
@@ -363,16 +377,25 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         # ---------------------------------------------------------------- listing
         # workers == 1 : flux continu (chaque élément est traité dès qu'il est listé).
         # workers > 1 : le listing est collecté en entier, puis traité par le pool.
-        emit(f"Analyse du profil @{username}...", "info")
         streaming = workers == 1
-        if streaming:
+        if import_mode:
+            # Import : la liste fournie remplace le listing, filtrée par la même boucle
+            pending = {e.get("id") for e in import_items
+                       if isinstance(e, dict) and e.get("id") and e.get("url")
+                       and e.get("id") not in history}
+            total_ref[0] = len(pending) or None  # total connu dès le départ
+            emit(f"Import de {len(import_items)} lien(s) pour @{username} "
+                 f"({len(pending)} à traiter)", "info")
+        else:
+            emit(f"Analyse du profil @{username}...", "info")
+        if streaming and not import_mode:
             emit("Téléchargement au fil du listing (flux continu)", "info")
         seen = set()
         generator = None
         try:
             try:
                 scan_report.clear()
-                generator = main.get_video_links(
+                generator = list(import_items) if import_mode else main.get_video_links(
                     username, history, platform, limit=limit,
                     # Log par défaut : get_video_links affiche déjà ses messages (pas de doublon)
                     callback_log=log if forward_extraction_logs else None,
@@ -404,8 +427,11 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
 
                 # Filtrage : déjà dans l'historique (sauf force_update) ou doublon dans ce run
                 video_id = video.get("id")
+                # Import : les succès historisés sont toujours sautés (force_update ne retente
+                # que les échecs, déjà retirés de `history`)
+                skip_known = import_mode or not force_update
                 if not video_id or not video.get("url") or video_id in seen \
-                        or (video_id in history and not force_update):
+                        or (video_id in history and skip_known):
                     stats["skipped"] += 1
                 else:
                     seen.add(video_id)
@@ -422,7 +448,7 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
                     close()
                 except Exception as e:
                     emit(f"Fermeture du listing : {e}", "warning")
-            if extracted:
+            if extracted and not import_mode:
                 try:
                     main.save_links_to_file(username, extracted)
                 except Exception as e:
@@ -452,7 +478,14 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
         emit(f"Erreur critique : {e}", "error")
 
     stats["stopped"] = stop_event.is_set()
-    _update_scan_state(username, stats, scan_report, items, critical_error, emit)
+    if import_mode:
+        # Un import ne modifie jamais scan_state.json (lecture seule pour le rapport)
+        try:
+            stats["scan_complete"] = main.load_scan_state(username)["fully_scanned"]
+        except Exception:
+            pass
+    else:
+        _update_scan_state(username, stats, scan_report, items, critical_error, emit)
     if stats["stopped"]:
         emit(f"Arrêt demandé pour @{username}", "warning")
     stats["duration_s"] = time.monotonic() - start
@@ -460,3 +493,17 @@ def run_download(username, platform="tiktok", *, min_sleep=2, max_sleep=6, limit
     stats["results"].sort(key=lambda r: r["index"])
     notify("complete", {k: v for k, v in stats.items() if k != "results"})
     return stats
+
+
+def run_import(username, items, *, min_sleep=2, max_sleep=6, cookies_file=None,
+               cookies_browser=None, force_update=False, log=None, progress=None,
+               should_stop=None, sleep=None):
+    """Télécharge une liste de liens déjà connue (exportée depuis le navigateur).
+
+    Mince enveloppe de run_download(items=...) : même boucle, mêmes statistiques, aucun
+    listing et aucune modification de scan_state.json. `items` : liste de {"id", "url"}.
+    """
+    return run_download(username, "tiktok", min_sleep=min_sleep, max_sleep=max_sleep,
+                        force_update=force_update, cookies_file=cookies_file,
+                        cookies_browser=cookies_browser, log=log, progress=progress,
+                        should_stop=should_stop, sleep=sleep, items=items)

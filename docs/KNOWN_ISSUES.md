@@ -12,6 +12,9 @@ Aucun bug critique connu.
 
 ## 🟡 Mineur
 
+### Script d'export de liens non vérifié sur le vrai DOM TikTok
+`static/js/export_links.js` (import de liste de liens) n'a été testé que sur une page simulée : le vrai DOM n'a pas pu être consulté (captcha sans session). Il ne s'appuie que sur les ancres `href` `/video/` et `/photo/` du profil ouvert. Si l'export est incomplet, relancez-le (doublons et vidéos déjà téléchargées ignorés) ou ouvrez une issue avec le comportement observé. Les liens courts `vm.tiktok.com` ne sont pas pris en charge.
+
 ### Mode incrémental après un téléchargement partiel (corrigé en 1.8.0)
 
 Avant la 1.8.0, l'arrêt après 10 vidéos connues empêchait d'atteindre les anciennes

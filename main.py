@@ -1011,9 +1011,86 @@ def append_link_to_file(username, video_url):
         print(f"Error appending to file: {e}")
         return False
 
+def _cli_log(message, level="info"):
+    prefix = {"error": "ERROR: ", "warning": "WARNING: "}.get(level, "")
+    print(f"{prefix}{message}")
+
+
+def _print_download_summary(stats):
+    print("\nDownload Summary:")
+    print(f"   Videos: {stats['videos']}")
+    print(f"   Slideshows: {stats['slideshows']}")
+    print(f"   Total: {stats['downloaded']}")
+    if stats['failed']:
+        print(f"   Failed: {stats['failed']}")
+    if stats['unknown']:
+        print(f"   Unknown type (skipped, retry later): {stats['unknown']}")
+    print(f"   Size: {stats['size_mb']:.1f} MB")
+    print(f"   Duration: {stats['duration_s']:.0f}s")
+
+
+def import_links_cli(args):
+    """Mode --links-file : importe une liste de liens (fichier, ou « - » = stdin) et la télécharge.
+
+    Si un pseudo est aussi donné en argument, tous les liens lui sont attribués ; sinon ils sont
+    groupés par pseudo présent dans les URLs. N'altère jamais scan_state.json.
+    Retourne le code de sortie (0 = ok, 1 = aucun lien valide ou fichier illisible).
+    """
+    import links_import
+    from orchestrator import run_import
+
+    try:
+        if args.links_file == "-":
+            text = sys.stdin.read()
+        else:
+            with open(args.links_file, "r", encoding="utf-8-sig", errors="replace") as fh:
+                text = fh.read()
+    except OSError as e:
+        print(f"ERROR: impossible de lire {args.links_file} : {e}")
+        return 1
+
+    groups, report = links_import.parse_links(text)
+    if report["ignored"]:
+        print(f"WARNING: {report['ignored']} lien(s) court(s) vm./vt.tiktok.com ignoré(s) "
+              "(ouvrez-les dans le navigateur et utilisez le lien complet)")
+    if report["invalid_count"]:
+        print(f"WARNING: {report['invalid_count']} ligne(s) sans lien valide, par exemple : "
+              + " | ".join(report["invalid"][:3]))
+    if not groups:
+        print("ERROR: aucun lien de vidéo TikTok valide trouvé "
+              "(format : https://www.tiktok.com/@pseudo/video/123...)")
+        return 1
+
+    forced = args.username_or_url
+    if forced:
+        forced = forced.strip().lstrip("@")
+        if not links_import.is_valid_username(forced):
+            print("ERROR: pseudo invalide (lettres, chiffres, point, tiret et tiret bas uniquement)")
+            return 1
+        plan = [(links_import.folder_name(forced),
+                 [item for items in groups.values() for item in items])]
+    else:
+        plan = [(links_import.folder_name(items[0]["username"]), items) for items in groups.values()]
+
+    for username, items in plan:
+        print(f"Import de {len(items)} lien(s) pour @{username}")
+        stats = run_import(
+            username, items,
+            min_sleep=args.min_sleep, max_sleep=args.max_sleep,
+            cookies_file=args.cookies_file, cookies_browser=args.cookies_browser,
+            force_update=args.force_update, log=_cli_log,
+        )
+        if len(plan) > 1:
+            print(f"--- @{username} ---")
+        _print_download_summary(stats)
+    return 0
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Extract and download videos from a user profile or single URL.")
-    parser.add_argument("username_or_url", help="The username (pseudo) or a direct TikTok URL.")
+    parser = argparse.ArgumentParser(description="Extract and download videos from a user profile or single URL, or import a list of links (--links-file).")
+    parser.add_argument("username_or_url", nargs="?", default=None,
+                        help="The username (pseudo) or a direct TikTok URL. Optional with --links-file "
+                             "(if given, all imported links are filed under this pseudo).")
     parser.add_argument("--platform", default="tiktok", help="Target platform (default: tiktok).")
     parser.add_argument("--download", action="store_true", help="Download the videos after extraction.")
     parser.add_argument("--min-sleep", type=int, default=2, help="Minimum sleep time in seconds (default: 2).")
@@ -1024,12 +1101,21 @@ def main():
                         help="Browser to extract cookies from (for private accounts). Example: chrome")
     parser.add_argument("--cookies-file", type=str,
                         help="Path to cookies.txt file (for private accounts). Example: cookies.txt")
+    parser.add_argument("--links-file", metavar="FICHIER",
+                        help="Import and download a list of video links exported from your browser "
+                             "(text file, one URL per line; '-' reads stdin). Replaces profile listing; "
+                             "honours --min-sleep/--max-sleep/--cookies-*/--force-update.")
 
     args = parser.parse_args()
+    if not args.links_file and not args.username_or_url:
+        parser.error("the following arguments are required: username_or_url (or --links-file)")
 
     from preflight import check_environment
     for problem in check_environment(args.cookies_file):
         print(f"[preflight] {problem}")
+
+    if args.links_file:
+        sys.exit(import_links_cli(args))
 
     # Check if input is a URL or username
     is_url = "tiktok.com" in args.username_or_url or "http" in args.username_or_url
@@ -1103,31 +1189,18 @@ def main():
         # Orchestrateur unique : extraction + détection du type + téléchargement + historique
         from orchestrator import run_download
 
-        def cli_log(message, level="info"):
-            prefix = {"error": "ERROR: ", "warning": "WARNING: "}.get(level, "")
-            print(f"{prefix}{message}")
-
         stats = run_download(
             username, args.platform,
             min_sleep=args.min_sleep, max_sleep=args.max_sleep, limit=args.limit,
             force_update=args.force_update,
             cookies_file=args.cookies_file, cookies_browser=args.cookies_browser,
-            log=cli_log,
+            log=_cli_log,
             forward_extraction_logs=False,  # get_video_links affiche déjà ses messages
         )
         if stats.get("extraction_error") and not stats.get("total_extracted"):
             print(f"ERROR: {stats['extraction_error']}")
             sys.exit(1)
-        print("\nDownload Summary:")
-        print(f"   Videos: {stats['videos']}")
-        print(f"   Slideshows: {stats['slideshows']}")
-        print(f"   Total: {stats['downloaded']}")
-        if stats['failed']:
-            print(f"   Failed: {stats['failed']}")
-        if stats['unknown']:
-            print(f"   Unknown type (skipped, retry later): {stats['unknown']}")
-        print(f"   Size: {stats['size_mb']:.1f} MB")
-        print(f"   Duration: {stats['duration_s']:.0f}s")
+        _print_download_summary(stats)
         return
 
     videos_generator = get_video_links(username, history, args.platform, args.limit, force_update=args.force_update, cookies_browser=args.cookies_browser, cookies_file=args.cookies_file)
